@@ -7,6 +7,7 @@ package builder // import "github.com/docker/docker/builder"
 import (
 	"context"
 	"io"
+	"os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
@@ -34,6 +35,11 @@ type Source interface {
 	Hash(path string) (string, error)
 }
 
+type DepInfo struct {
+	DepFile *os.File
+	DockerfileArch *os.File
+}
+
 // Backend abstracts calls to a Docker Daemon.
 type Backend interface {
 	ImageBackend
@@ -46,6 +52,10 @@ type Backend interface {
 	ContainerCreateWorkdir(containerID string) error
 
 	CreateImage(config []byte, parent string) (Image, error)
+
+	CheckBuildHistory(dockerfile string) (*DepInfo, error)
+
+	ApplyBuildHistory(dockerfile string) (*DepInfo, error)
 
 	ImageCacheBuilder
 }

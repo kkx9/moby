@@ -154,6 +154,76 @@ func (daemon *Daemon) UsesSnapshotter() bool {
 	return false
 }
 
+// UseDependencyBuilder returns true if feature flag to use Dependency Builder is enabled
+func (daemon *Daemon) UseDependencyBuilder() bool {
+	if daemon.configStore.Features != nil {
+		if b, ok := daemon.configStore.Features["dependency-builder"]; ok {
+			return b
+		}
+	}
+	return false
+}
+
+func (daemon *Daemon) getHistoryFolder(dockerfile string) string {
+	historyFolder := config.DefaultBuildHistoryFolder
+	if daemon.configStore.ValuesSet != nil {
+		if b, ok := daemon.configStore.ValuesSet["dependency-folder"]; ok {
+			historyFolder,_ = b.(string)
+		}
+	}
+	return fmt.Sprintf("%s/%s", historyFolder, dockerfile)
+}
+
+func (daemon *Daemon) CheckBuildHistory(dockerfile string) (*builder.DepInfo, error) {
+	historyFolder := daemon.getHistoryFolder(dockerfile)
+	err := os.MkdirAll(historyFolder, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(historyFolder); os.IsNotExist(err) {
+		return nil, nil
+	}
+	
+	bdd, err := os.Open(fmt.Sprintf("%s/%s.dep", historyFolder, dockerfile))
+	if err != nil {
+		return nil, err
+	}
+	bda, err := os.Open(fmt.Sprintf("%s/%s.arch", historyFolder, dockerfile))
+	if err != nil {
+		return nil, err
+	}
+	bd := &builder.DepInfo{
+		DepFile:			bdd,
+		DockerfileArch:		bda,
+	}
+	return bd, nil
+}
+
+func (daemon *Daemon) ApplyBuildHistory(dockerfile string) (*builder.DepInfo, error) {
+	historyFolder := daemon.getHistoryFolder(dockerfile)
+	if _, err := os.Stat(fmt.Sprintf("%s/%s", historyFolder, dockerfile)); os.IsNotExist(err) {
+		err := os.MkdirAll(historyFolder, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+	}
+	
+	bdd, err := os.OpenFile(fmt.Sprintf("%s/%s.dep", historyFolder, dockerfile), os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
+	bda, err := os.OpenFile(fmt.Sprintf("%s/%s.arch", historyFolder, dockerfile), os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
+	logrus.Debug(bdd,bda)
+	bd := &builder.DepInfo{
+		DepFile:			bdd,
+		DockerfileArch:		bda,
+	}
+	return bd, nil
+}
+
 // RegistryHosts returns registry configuration in containerd resolvers format
 func (daemon *Daemon) RegistryHosts() docker.RegistryHosts {
 	var (

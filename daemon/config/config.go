@@ -61,6 +61,8 @@ const (
 	// SeccompProfileUnconfined is a special profile name for seccomp to use an
 	// "unconfined" seccomp profile.
 	SeccompProfileUnconfined = "unconfined"
+
+	DefaultBuildHistoryFolder = "/var/lib/docker/depbuilder"
 )
 
 var builtinRuntimes = map[string]bool{

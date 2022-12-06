@@ -31,6 +31,7 @@ import (
 	systemrouter "github.com/docker/docker/api/server/router/system"
 	"github.com/docker/docker/api/server/router/volume"
 	buildkit "github.com/docker/docker/builder/builder-next"
+	"github.com/docker/docker/builder/depbuilder"
 	"github.com/docker/docker/builder/dockerfile"
 	"github.com/docker/docker/cli/debug"
 	"github.com/docker/docker/cmd/dockerd/trap"
@@ -285,10 +286,22 @@ func newRouterOptions(config *config.Config, d *daemon.Daemon) (routerOptions, e
 		return opts, errors.Wrap(err, "failed to create sessionmanager")
 	}
 
-	manager, err := dockerfile.NewBuildManager(d.BuilderBackend(), d.IdentityMapping())
-	if err != nil {
-		return opts, err
+	var manager buildbackend.Builder
+
+	if d.UseDependencyBuilder(){
+		if dm, err := depbuilder.NewBuildManager(d.BuilderBackend(), d.IdentityMapping()); err == nil {
+			manager = dm
+		} else {
+			return opts, err
+		}
+	} else {
+		if dm, err := dockerfile.NewBuildManager(d.BuilderBackend(), d.IdentityMapping()); err == nil {
+			manager = dm
+		} else {
+			return opts, err
+		}
 	}
+	
 	cgroupParent := newCgroupParent(config)
 	ro := routerOptions{
 		sessionManager: sm,
@@ -312,6 +325,11 @@ func newRouterOptions(config *config.Config, d *daemon.Daemon) (routerOptions, e
 		if err != nil {
 			return opts, err
 		}
+
+		// dm, err := depbuilder.NewBuildManager(d.BuilderBackend(), d.IdentityMapping())
+		// if err != nil {
+		// 	return opts, err
+		// }
 
 		bb, err := buildbackend.NewBackend(d.ImageService(), manager, bk, d.EventsService)
 		if err != nil {

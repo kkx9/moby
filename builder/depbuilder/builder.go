@@ -1,4 +1,4 @@
-package dockerfile // import "github.com/docker/docker/builder/dockerfile"
+package depbuilder // import "github.com/docker/docker/builder/depbuilder"
 
 import (
 	"bytes"
@@ -7,6 +7,9 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"bufio"
+	"os"
+	"strconv"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api/types"
@@ -45,14 +48,12 @@ const (
 	stepFormat = "Step %d/%d : %v"
 )
 
-// BuildManager is shared across all Builder objects
 type BuildManager struct {
 	idMapping idtools.IdentityMapping
 	backend   builder.Backend
 	pathCache pathCache // TODO: make this persistent
 }
 
-// NewBuildManager creates a BuildManager
 func NewBuildManager(b builder.Backend, identityMapping idtools.IdentityMapping) (*BuildManager, error) {
 	bm := &BuildManager{
 		backend:   b,
@@ -62,7 +63,6 @@ func NewBuildManager(b builder.Backend, identityMapping idtools.IdentityMapping)
 	return bm, nil
 }
 
-// Build starts a new build from a BuildConfig
 func (bm *BuildManager) Build(ctx context.Context, config backend.BuildConfig) (*builder.Result, error) {
 	buildsTriggered.Inc()
 	if config.Options.Dockerfile == "" {
@@ -70,7 +70,6 @@ func (bm *BuildManager) Build(ctx context.Context, config backend.BuildConfig) (
 	}
 
 	source, dockerfile, err := remotecontext.Detect(config)
-	logrus.Debug("[BUILDER] dockerfile name: ", config.Options.Dockerfile)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +98,6 @@ func (bm *BuildManager) Build(ctx context.Context, config backend.BuildConfig) (
 	return b.build(ctx, source, dockerfile)
 }
 
-// builderOptions are the dependencies required by the builder
 type builderOptions struct {
 	Options        *types.ImageBuildOptions
 	Backend        builder.Backend
@@ -110,7 +108,7 @@ type builderOptions struct {
 
 // Builder is a Dockerfile builder
 // It implements the builder.Backend interface.
-type Builder struct {
+type DepBuilder struct {
 	options *types.ImageBuildOptions
 
 	Stdout io.Writer
@@ -127,10 +125,12 @@ type Builder struct {
 	containerManager *containerManager
 	imageProber      ImageProber
 	platform         *specs.Platform
+
+	firstBuild		bool
+	depInfo 		*builder.DepInfo
 }
 
-// newBuilder creates a new Dockerfile builder from an optional dockerfile and a Options.
-func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
+func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error) {
 	config := options.Options
 	if config == nil {
 		config = new(types.ImageBuildOptions)
@@ -141,7 +141,7 @@ func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
 		return nil, err
 	}
 
-	b := &Builder{
+	b := &DepBuilder{
 		options:          config,
 		Stdout:           options.ProgressWriter.StdoutFormatter,
 		Stderr:           options.ProgressWriter.StderrFormatter,
@@ -153,7 +153,20 @@ func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
 		pathCache:        options.PathCache,
 		imageProber:      imageProber,
 		containerManager: newContainerManager(options.Backend),
+		firstBuild:		  false,
+		depInfo:		  nil,
 	}
+
+	// check dependency file
+	logrus.Debug(config.Dockerfile)
+	depInfo, err := b.docker.CheckBuildHistory(config.Dockerfile)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if depInfo == nil {
+		b.firstBuild = true
+	}
+	b.depInfo = depInfo
 
 	// same as in Builder.Build in builder/builder-next/builder.go
 	// TODO: remove once config.Platform is of type specs.Platform
@@ -168,7 +181,6 @@ func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
 	return b, nil
 }
 
-// Build 'LABEL' command(s) from '--label' options and add to the last stage
 func buildLabelOptions(labels map[string]string, stages []instructions.Stage) {
 	keys := []string{}
 	for key := range labels {
@@ -183,9 +195,7 @@ func buildLabelOptions(labels map[string]string, stages []instructions.Stage) {
 	}
 }
 
-// Build runs the Dockerfile builder by parsing the Dockerfile and executing
-// the instructions from the file.
-func (b *Builder) build(ctx context.Context, source builder.Source, dockerfile *parser.Result) (*builder.Result, error) {
+func (b *DepBuilder) build(ctx context.Context, source builder.Source, dockerfile *parser.Result) (*builder.Result, error) {
 	defer b.imageSources.Unmount()
 
 	stages, metaArgs, err := instructions.Parse(dockerfile.AST)
@@ -205,10 +215,10 @@ func (b *Builder) build(ctx context.Context, source builder.Source, dockerfile *
 		stages = stages[:targetIx+1]
 	}
 
-	// Add 'LABEL' command specified by '--label' option to the last stage
 	buildLabelOptions(b.options.Labels, stages)
 
 	dockerfile.PrintWarnings(b.Stderr)
+
 	dispatchState, err := b.dispatchDockerfileWithCancellation(ctx, stages, metaArgs, dockerfile.EscapeToken, source)
 	if err != nil {
 		return nil, err
@@ -218,6 +228,7 @@ func (b *Builder) build(ctx context.Context, source builder.Source, dockerfile *
 		return nil, errors.New("No image was generated. Is your Dockerfile empty?")
 	}
 	return &builder.Result{ImageID: dispatchState.imageID, FromImage: dispatchState.baseImage}, nil
+
 }
 
 func emitImageID(aux *streamformatter.AuxFormatter, state *dispatchState) error {
@@ -248,7 +259,16 @@ func printCommand(out io.Writer, currentCommandIndex int, totalCommands int, cmd
 	return currentCommandIndex + 1
 }
 
-func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseResult []instructions.Stage, metaArgs []instructions.ArgCommand, escapeToken rune, source builder.Source) (*dispatchState, error) {
+func transIntSlice(arr []string) []int {
+	out := []int{}
+	for _, v := range(arr) {
+		iv, _ := strconv.Atoi(v)
+		out = append(out, iv)
+	}
+	return out
+}
+
+func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, parseResult []instructions.Stage, metaArgs []instructions.ArgCommand, escapeToken rune, source builder.Source) (*dispatchState, error) {
 	dispatchRequest := dispatchRequest{}
 	buildArgs := NewBuildArgs(b.options.BuildArgs)
 	totalCommands := len(metaArgs) + len(parseResult)
@@ -267,6 +287,59 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 	}
 
 	stagesResults := newStagesBuildResults()
+	layerList := []string{}
+	var depList [][]int
+	logrus.Debug(totalCommands)
+
+	if b.firstBuild == false {
+		depFileReader := bufio.NewScanner(b.depInfo.DepFile)
+		dockerfileArchReader := bufio.NewScanner(b.depInfo.DockerfileArch)
+		matchRow := 0
+		for _, s := range parseResult {
+			if !depFileReader.Scan() || !dockerfileArchReader.Scan() {
+				break
+			}
+			matchRow++
+			sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
+			depLine := strings.TrimSpace(depFileReader.Text())
+			depSlice := transIntSlice(strings.Split(depLine, " "))
+			if sourceCode == s.SourceCode {
+				depList = append(depList, depSlice[1:])
+			} else{
+				depList = append(depList, []int{-1})
+				logrus.Warning(sourceCode, s.SourceCode)
+			}
+			for _, cmd := range s.Commands {
+				if !depFileReader.Scan() || !dockerfileArchReader.Scan() {
+					break
+				}
+				matchRow++
+				sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
+				depLine := strings.TrimSpace(depFileReader.Text())
+				depSlice := transIntSlice(strings.Split(depLine, " "))
+				if sourceCode == fmt.Sprintf("%s", cmd){
+					depList = append(depList, depSlice)
+				} else {
+					depList = append(depList, []int{-1})
+					logrus.Warning(sourceCode, cmd)
+				}
+			}
+		}
+		logrus.Debug(depList)
+	}
+
+	bd, err := b.docker.ApplyBuildHistory(b.options.Dockerfile)
+	if err != nil {
+		return nil, err
+	}
+	b.depInfo = bd
+
+	logrus.Debug(b.depInfo.DepFile, b.depInfo.DockerfileArch)
+
+	dockerfileArchWriter := bufio.NewWriter(b.depInfo.DockerfileArch)
+	defer b.depInfo.DockerfileArch.Close()
+	depFileWriter := bufio.NewWriter(b.depInfo.DepFile)
+	defer b.depInfo.DepFile.Close()
 
 	for _, s := range parseResult {
 		stage := s
@@ -275,10 +348,16 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 		}
 		dispatchRequest = newDispatchRequest(b, escapeToken, source, buildArgs, stagesResults)
 
+		logrus.Debug(stage.BaseName)
+		logrus.Debug(fmt.Sprintf("%s\n", stage.SourceCode))
+		dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", stage.SourceCode))
+		depFileWriter.WriteString(fmt.Sprintf("-1\n"))
+
 		currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, stage.SourceCode)
 		if err := initializeStage(ctx, dispatchRequest, &stage); err != nil {
 			return nil, err
 		}
+		
 		dispatchRequest.state.updateRunConfig()
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		for _, cmd := range stage.Commands {
@@ -292,14 +371,32 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 				// Not cancelled yet, keep going...
 			}
 
+			// Start tracee to record
+			logrus.Debug(fmt.Sprintf("%s\n", cmd))
+			dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", cmd))
+			logrus.Debug("Start tracee")
 			currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, cmd)
-
+			
 			if err := dispatch(ctx, dispatchRequest, cmd); err != nil {
 				return nil, err
 			}
 			dispatchRequest.state.updateRunConfig()
+
+			layerList = append(layerList, dispatchRequest.state.imageID)
+			logrus.Debug(dispatchRequest.state.imageID)
+			logrus.Debug(stringid.TruncateID(dispatchRequest.state.imageID))
+			logrus.Debug(currentCommandIndex)
+			depFileWriter.WriteString(fmt.Sprintf("%d\n", currentCommandIndex-2))
+
+			// End tracee and record
+			logrus.Debug("End tracee")
+
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
+
+		dockerfileArchWriter.Flush()
+		depFileWriter.Flush()
+
 		if err := emitImageID(b.Aux, dispatchRequest.state); err != nil {
 			return nil, err
 		}
@@ -312,15 +409,6 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 	return dispatchRequest.state, nil
 }
 
-// BuildFromConfig builds directly from `changes`, treating it as if it were the contents of a Dockerfile
-// It will:
-// - Call parse.Parse() to get an AST root for the concatenated Dockerfile entries.
-// - Do build by calling builder.dispatch() to call all entries' handling routines
-//
-// BuildFromConfig is used by the /commit endpoint, with the changes
-// coming from the query parameter of the same name.
-//
-// TODO: Remove?
 func BuildFromConfig(ctx context.Context, config *container.Config, changes []string, os string) (*container.Config, error) {
 	if len(changes) == 0 {
 		return config, nil

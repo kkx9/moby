@@ -37,6 +37,15 @@ func (l *roLayer) DiffID() layer.DiffID {
 	return l.roLayer.DiffID()
 }
 
+func (l *roLayer) CacheID() (string,error) {
+	chainID := l.roLayer.ChainID()
+	rl,err := l.layerStore.Get(chainID)
+	if err != nil {
+		return "", err
+	}
+	return rl.CacheID(), nil
+}
+
 func (l *roLayer) Release() error {
 	if l.released {
 		return nil
@@ -254,4 +263,8 @@ func (i *ImageService) CreateImage(config []byte, parent string) (builder.Image,
 	}
 
 	return i.imageStore.Get(id)
+}
+
+func (i *ImageService) GetLastCacheID() string {
+	return i.layerStore.GetLastCacheID()
 }

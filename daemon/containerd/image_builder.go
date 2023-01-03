@@ -22,3 +22,7 @@ func (i *ImageService) GetImageAndReleasableLayer(ctx context.Context, refOrID s
 func (i *ImageService) CreateImage(config []byte, parent string) (builder.Image, error) {
 	return nil, errdefs.NotImplemented(errors.New("not implemented"))
 }
+
+func (i *ImageService) GetLastCacheID() string {
+	return ""
+}

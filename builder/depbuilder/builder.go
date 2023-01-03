@@ -128,6 +128,7 @@ type DepBuilder struct {
 
 	firstBuild		bool
 	depInfo 		*builder.DepInfo
+	traceManager	*Tracee
 }
 
 func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error) {
@@ -139,6 +140,11 @@ func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error
 	imageProber, err := newImageProber(ctx, options.Backend, config.CacheFrom, config.NoCache)
 	if err != nil {
 		return nil, err
+	}
+
+	tm := &Tracee{
+		traceLog:		 nil,
+		lastTime:		 0,
 	}
 
 	b := &DepBuilder{
@@ -155,6 +161,7 @@ func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error
 		containerManager: newContainerManager(options.Backend),
 		firstBuild:		  false,
 		depInfo:		  nil,
+		traceManager:	  tm,
 	}
 
 	// check dependency file
@@ -291,6 +298,10 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	var depList [][]int
 	logrus.Debug(totalCommands)
 
+	// start tracee
+
+
+	//get build history
 	if b.firstBuild == false {
 		depFileReader := bufio.NewScanner(b.depInfo.DepFile)
 		dockerfileArchReader := bufio.NewScanner(b.depInfo.DockerfileArch)
@@ -336,6 +347,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 	logrus.Debug(b.depInfo.DepFile, b.depInfo.DockerfileArch)
 
+	//init writer
 	dockerfileArchWriter := bufio.NewWriter(b.depInfo.DockerfileArch)
 	defer b.depInfo.DockerfileArch.Close()
 	depFileWriter := bufio.NewWriter(b.depInfo.DepFile)
@@ -373,6 +385,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 			// Start tracee to record
 			logrus.Debug(fmt.Sprintf("%s\n", cmd))
+			b.traceManager.UpdateTime()
 			dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", cmd))
 			logrus.Debug("Start tracee")
 			currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, cmd)
@@ -382,17 +395,22 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			}
 			dispatchRequest.state.updateRunConfig()
 
+			// get layer id && check depdency trace
+			// b.traceManager.GetStageId()
+
 			layerList = append(layerList, dispatchRequest.state.imageID)
 			logrus.Debug(dispatchRequest.state.imageID)
 			logrus.Debug(stringid.TruncateID(dispatchRequest.state.imageID))
 			logrus.Debug(currentCommandIndex)
 			depFileWriter.WriteString(fmt.Sprintf("%d\n", currentCommandIndex-2))
 
-			// End tracee and record
-			logrus.Debug("End tracee")
+			b.checkBuildDepdency()
 
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
+
+		// End tracee and record
+		logrus.Debug("End tracee")
 
 		dockerfileArchWriter.Flush()
 		depFileWriter.Flush()
@@ -407,6 +425,30 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	}
 	buildArgs.WarnOnUnusedBuildArgs(b.Stdout)
 	return dispatchRequest.state, nil
+}
+
+func (b *DepBuilder) checkBuildDepdency(stageDict *map[string]int, stageNum int) []int {
+	// hard coding
+	lf, err := os.Open("/tracee/tracee.log")
+	b.traceManager.traceLog = lf
+
+	depList := b.traceManager.GetDepLayer()
+
+	b.traceManager.traceLog.Close()
+	b.traceManager.UpdateTime()
+
+	buildDep := []
+
+	for _,depL := range depList {
+		if depL in stageDict {
+			buildDep = append(buildDep, depL)
+		}
+	}
+	stageID := b.docker.GetLastCacheID()
+	logrus.Debugf("get cache id %s", b.docker.GetLastCacheID())
+	stageDict[stageID] = stageNum
+	
+
 }
 
 func BuildFromConfig(ctx context.Context, config *container.Config, changes []string, os string) (*container.Config, error) {

@@ -57,6 +57,8 @@ type Backend interface {
 
 	ApplyBuildHistory(dockerfile string) (*DepInfo, error)
 
+	GetLastCacheID() string
+
 	ImageCacheBuilder
 }
 
@@ -114,6 +116,7 @@ type ROLayer interface {
 	Release() error
 	NewRWLayer() (RWLayer, error)
 	DiffID() layer.DiffID
+	CacheID() (string, error)
 }
 
 // RWLayer is active layer that can be read/modified

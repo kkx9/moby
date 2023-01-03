@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
@@ -59,6 +60,7 @@ func (b *DepBuilder) commitContainer(dispatchState *dispatchState, id string, co
 	}
 
 	imageID, err := b.docker.CommitBuildStep(commitCfg)
+	b.docker.
 	dispatchState.imageID = string(imageID)
 	return err
 }
@@ -68,6 +70,13 @@ func (b *DepBuilder) exportImage(state *dispatchState, layer builder.RWLayer, pa
 	if err != nil {
 		return err
 	}
+
+	cacheID, err := newLayer.CacheID()
+	if err != nil {
+		return err
+	}
+
+	logrus.Debugf("get layer id: %s", cacheID)
 
 	parentImage, ok := parent.(*image.Image)
 	if !ok {
@@ -320,14 +329,21 @@ func getShell(c *container.Config, os string) []string {
 }
 
 func (b *DepBuilder) probeCache(dispatchState *dispatchState, runConfig *container.Config) (bool, error) {
+	// hard coding
+	// lf, err := os.Open("/tracee/tracee.log")
+	// b.traceManager.traceLog = lf
+	// stageId := b.traceManager.GetStageId()
+	// b.traceManager.traceLog.Close()
+	// logrus.Debug("stage ID is: " + stageId)
 	depdencyLayer := [] string {dispatchState.imageID}
+	// depdencyLayer := b.traceManager.GetDepLayer()
 	logrus.Debug("check cache")
 	logrus.Info(dispatchState)
 	cachedID, err := b.imageProber.Probe(depdencyLayer, runConfig)
 	if cachedID == "" || err != nil {
 		return false, err
 	}
-	fmt.Fprint(b.Stdout, " ---> Using cache\n")
+	fmt.Fprint (b.Stdout, " ---> Using cache\n")
 
 	dispatchState.imageID = cachedID
 	return true, nil

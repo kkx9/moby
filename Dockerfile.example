@@ -1,3 +1,5 @@
 FROM alpine
-RUN apk add curl
+RUN apk add curl && mkdir test
+RUN echo 'aa' > test/test.txt
+RUN echo 'aaa' >> test/test.txt
 ENTRYPOINT [echo, "hello world!"]

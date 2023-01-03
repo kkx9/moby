@@ -83,6 +83,8 @@ type Layer interface {
 	// tar stream used to create this layer.
 	DiffID() DiffID
 
+	CacheID() string
+
 	// Parent returns the next layer in the layer chain.
 	Parent() Layer
 
@@ -182,6 +184,8 @@ type Store interface {
 	Cleanup() error
 	DriverStatus() [][2]string
 	DriverName() string
+
+	GetLastCacheID() string
 }
 
 // DescribableStore represents a layer store capable of storing

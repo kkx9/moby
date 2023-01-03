@@ -38,6 +38,10 @@ func (el *emptyLayer) DiffID() DiffID {
 	return DigestSHA256EmptyTar
 }
 
+func (el *emptyLayer) CacheID() string {
+	return ""
+}
+
 func (el *emptyLayer) Parent() Layer {
 	return nil
 }

@@ -74,4 +74,6 @@ type ImageService interface {
 	Cleanup() error
 	StorageDriver() string
 	UpdateConfig(maxDownloads, maxUploads int)
+
+	GetLastCacheID() string
 }

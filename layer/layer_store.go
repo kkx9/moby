@@ -40,6 +40,8 @@ type layerStore struct {
 
 	// protect *RWLayer() methods from operating on the same name/id
 	locker *locker.Locker
+
+	lastCacheID	string
 }
 
 // StoreOptions are the options used to create a new Store instance
@@ -92,6 +94,7 @@ func newStoreFromGraphDriver(root string, driver graphdriver.Driver) (Store, err
 		mounts:      map[string]*mountedLayer{},
 		locker:      locker.New(),
 		useTarSplit: !caps.ReproducesExactDiffs,
+		lastCacheID: "",
 	}
 
 	ids, mounts, err := ms.List()
@@ -303,6 +306,8 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		references:     map[Layer]struct{}{},
 		descriptor:     descriptor,
 	}
+
+	ls.lastCacheID = layer.cacheID
 
 	if err = ls.driver.Create(layer.cacheID, pid, nil); err != nil {
 		return nil, err
@@ -765,6 +770,10 @@ func (ls *layerStore) DriverStatus() [][2]string {
 
 func (ls *layerStore) DriverName() string {
 	return ls.driver.String()
+}
+
+func (ls *layerStore) GetLastCacheID() string {
+	return ls.lastCacheID
 }
 
 type naiveDiffPathDriver struct {

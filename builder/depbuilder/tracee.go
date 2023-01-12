@@ -22,7 +22,7 @@ type Tracee struct {
 	traceRecord			[]map[string]interface{}
 }
 
-const dockerStorgePath = "var/lib/docker/vfs/dir/"
+const dockerStorgePath = "/var/lib/docker/vfs/dir/"
 
 var dockerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/vfs/dir/`)
 
@@ -125,7 +125,7 @@ func (t *Tracee) GetStageId() string {
 			var re = regexp.MustCompile(`(?m)/[a-zA-Z0-9]*-init/`)
 			for _, match := range re.FindAllString(mkdirPath, -1) {
 				t.layerDigest = strings.TrimSuffix(strings.Trim(match,"//"), "-init")
-				logrus.Debug(t.layerDigest)
+				logrus.Debugf("stage id is : %s", t.layerDigest)
 				return t.layerDigest
 			}
 		}
@@ -162,14 +162,14 @@ func getPath(argsList []interface{}) string {
 	return ""
 }
 
-func getMode(argsList []interface{}) string {
+func getMode(argsList []interface{}) int {
 	for _, arg := range argsList {
 		argMap := arg.(map[string]interface{})
 		if argMap["name"].(string) == "flags" {
-			return argMap["value"].(string)
+			return int(argMap["value"].(float64))
 		}
 	}
-	return ""
+	return 0
 }
 
 func (t *Tracee) MatchTrace() ([]int, error) {
@@ -189,7 +189,7 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 			return nil, err
 		}
 
-		if trace["timestamp"].(int64) <= t.lastTime{
+		if int64(trace["timestamp"].(float64)) <= t.lastTime{
 			continue
 		}
 
@@ -201,6 +201,10 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 			openList = append(openList, trace)
 		}
 	}
+
+	logrus.Debugf("lognum is %s", len(t.traceRecord))
+
+	t.GetStageId()
 
 	fileMap := make(map[string]bool)
 
@@ -242,7 +246,7 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 			for _, match := range regMatch{
 				openMode := getMode(argsList)
 				// write file
-				if strings.Contains(openMode, "O_WRONLY") || strings.Contains(openMode, "O_RDWR") {
+				if (openMode & os.O_WRONLY) == os.O_WRONLY || (openMode & os.O_RDWR) == os.O_RDWR {
 					filePath := strings.Trim(openPath, match)
 					t.fileUpdateRecord[`\` + filePath] = t.LayerCount
 				}

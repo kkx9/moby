@@ -143,8 +143,10 @@ func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error
 	}
 
 	tm := &Tracee{
-		traceLog:		 nil,
-		lastTime:		 0,
+		traceLog:		 	nil,
+		lastTime:		 	0,
+		layerDict:			make(map[int]string),
+		fileUpdateRecord:	make(map[string]int),
 	}
 
 	b := &DepBuilder{
@@ -397,7 +399,6 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			dispatchRequest.state.updateRunConfig()
 
 			// get layer id && check depdency trace
-			b.traceManager.GetStageId()
 			b.traceManager.LayerCount = currentCommandIndex
 
 			layerList = append(layerList, dispatchRequest.state.imageID)

@@ -397,7 +397,8 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			dispatchRequest.state.updateRunConfig()
 
 			// get layer id && check depdency trace
-			// b.traceManager.GetStageId()
+			b.traceManager.GetStageId()
+			b.traceManager.LayerCount = currentCommandIndex
 
 			layerList = append(layerList, dispatchRequest.state.imageID)
 			logrus.Debug(currentCommandIndex)

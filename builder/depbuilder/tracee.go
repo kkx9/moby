@@ -9,14 +9,14 @@ import (
 	"time"
 	"encoding/json"
 
-	_"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 type Tracee struct {
 	traceLog 			*os.File
 	lastTime			int64
 	layerDigest			string
-	layerCount			int
+	LayerCount			int
 	layerDict			map[int]string
 	fileUpdateRecord	map[string]int
 	traceRecord			[]map[string]interface{}
@@ -124,7 +124,9 @@ func (t *Tracee) GetStageId() string {
 		if strings.Contains(mkdirPath, "-init") && strings.HasPrefix(mkdirPath, dockerStorgePath) {
 			var re = regexp.MustCompile(`(?m)/[a-zA-Z0-9]*-init/`)
 			for _, match := range re.FindAllString(mkdirPath, -1) {
-				return strings.TrimSuffix(strings.Trim(match,"//"), "-init")
+				t.layerDigest = strings.TrimSuffix(strings.Trim(match,"//"), "-init")
+				logrus.Debug(t.layerDigest)
+				return t.layerDigest
 			}
 		}
 	}
@@ -212,7 +214,7 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 				pathSuffix := strings.TrimPrefix(mkdirPath, dockerStorgePath + t.layerDigest + `/`)
 				if len(pathSuffix) > 0 {
 					if _, inMap := fileMap[pathSuffix]; inMap {
-						t.fileUpdateRecord[pathSuffix] = t.layerCount
+						t.fileUpdateRecord[pathSuffix] = t.LayerCount
 						delete(fileMap, pathSuffix)
 					}
 				}		
@@ -242,7 +244,7 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 				// write file
 				if strings.Contains(openMode, "O_WRONLY") || strings.Contains(openMode, "O_RDWR") {
 					filePath := strings.Trim(openPath, match)
-					t.fileUpdateRecord[`\` + filePath] = t.layerCount
+					t.fileUpdateRecord[`\` + filePath] = t.LayerCount
 				}
 			}
 		}

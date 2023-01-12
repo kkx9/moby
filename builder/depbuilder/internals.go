@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
@@ -60,7 +59,6 @@ func (b *DepBuilder) commitContainer(dispatchState *dispatchState, id string, co
 	}
 
 	imageID, err := b.docker.CommitBuildStep(commitCfg)
-	b.docker.
 	dispatchState.imageID = string(imageID)
 	return err
 }

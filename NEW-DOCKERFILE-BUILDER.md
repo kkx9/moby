@@ -8,4 +8,6 @@ docker run --rm --privileged  -e DOCKER_CROSSPLATFORMS -e BUILD_APT_MIRROR -e BU
 
 hack/make.sh binary install-binary run
 
-docker run  --name tracee --rm -it  --pid=host --cgroupns=host --privileged  -v /etc/os-release:/etc/os-release-host:ro -v /root/tracee_test/:/tmp  -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host aquasec/tracee:0.9.3 trace --trace container --trace event=open,open*,mount --trace open.pathname="/var/lib/docker/*" --trace openat.pathname="/var/lib/docker/*" --trace openat2.pathname="/var/lib/docker/*" --trace mount.source="/var/lib/docker/*" --trace mount.target="/var/lib/docker/*" --output out-file:/tmp/tracee.log
+docker run  --name tracee --rm -it  --pid=host --cgroupns=host --privileged  -v /etc/os-release:/etc/os-release-host:ro -v /root/tracee_test/:/tmp  -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host aquasec/tracee:0.9.3 trace --trace container --trace event=open,open*,mount,mkdir* --trace open.pathname="/var/lib/docker/*" --trace openat.pathname="/var/lib/docker/*" --trace openat2.pathname="/var/lib/docker/*" --trace mount.source="/var/lib/docker/*" --trace mount.target="/var/lib/docker/*" --output out-file:/tmp/tracee.log --output json
+
+docker run  --name tracee --rm -it  --pid=host --cgroupns=host --privileged  -v /etc/os-release:/etc/os-release-host:ro -v /root/tracee_test/:/tmp -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host aquasec/tracee:0.9.3 trace --trace container --trace event=mkdir* --output out-file:/tmp/tracee.log

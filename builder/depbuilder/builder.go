@@ -296,6 +296,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	stagesResults := newStagesBuildResults()
 	layerList := []string{}
 	var depList [][]int
+	stageInd := map[string]int{}
 	logrus.Debug(totalCommands)
 
 	// start tracee
@@ -399,12 +400,13 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			// b.traceManager.GetStageId()
 
 			layerList = append(layerList, dispatchRequest.state.imageID)
-			logrus.Debug(dispatchRequest.state.imageID)
-			logrus.Debug(stringid.TruncateID(dispatchRequest.state.imageID))
 			logrus.Debug(currentCommandIndex)
 			depFileWriter.WriteString(fmt.Sprintf("%d\n", currentCommandIndex-2))
 
-			b.checkBuildDepdency()
+			depTmp := b.checkBuildDepdency(stageInd, currentCommandIndex)
+			for _,k := range depTmp{
+				logrus.Debugf("depStage is: %d", k)
+			}
 
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
@@ -427,28 +429,27 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	return dispatchRequest.state, nil
 }
 
-func (b *DepBuilder) checkBuildDepdency(stageDict *map[string]int, stageNum int) []int {
+func (b *DepBuilder) checkBuildDepdency(stageDict map[string]int, stageNum int) []int {
 	// hard coding
-	lf, err := os.Open("/tracee/tracee.log")
+	lf, _ := os.Open("/tracee/tracee.log")
 	b.traceManager.traceLog = lf
 
-	depList := b.traceManager.GetDepLayer()
+	buildDep := b.traceManager.GetDepLayer()
 
 	b.traceManager.traceLog.Close()
 	b.traceManager.UpdateTime()
 
-	buildDep := []
+	// buildDep := []int{}
 
-	for _,depL := range depList {
-		if depL in stageDict {
-			buildDep = append(buildDep, depL)
-		}
-	}
+	// for _,depL := range depList {
+	// 	if ind, ok := stageDict[depL]; ok{
+	// 		buildDep = append(buildDep, ind)
+	// 	}
+	// }
 	stageID := b.docker.GetLastCacheID()
 	logrus.Debugf("get cache id %s", b.docker.GetLastCacheID())
 	stageDict[stageID] = stageNum
-	
-
+	return buildDep
 }
 
 func BuildFromConfig(ctx context.Context, config *container.Config, changes []string, os string) (*container.Config, error) {

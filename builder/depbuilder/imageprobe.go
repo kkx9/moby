@@ -12,7 +12,7 @@ import (
 // cache.
 type ImageProber interface {
 	Reset(ctx context.Context) error
-	Probe(parentID []string, runConfig *container.Config) (string, error)
+	Probe(parentID string, runConfig *container.Config) (string, error)
 }
 
 type resetFunc func(context.Context) (builder.ImageCache, error)
@@ -51,28 +51,18 @@ func (c *imageProber) Reset(ctx context.Context) error {
 
 // Probe checks if cache match can be found for current build instruction.
 // It returns the cachedID if there is a hit, and the empty string on miss
-func (c *imageProber) Probe(parentID []string, runConfig *container.Config) (string, error) {
+func (c *imageProber) Probe(parentID string, runConfig *container.Config) (string, error) {
 	if c.cacheBusted {
 		return "", nil
 	}
-	cacheID := ""
-	for _, ID := range parentID {
-		findID, err := c.cache.GetCache(ID, runConfig)
-		if err != nil {
-			return "", err
-		}
-		if len(findID) == 0 {
-			logrus.Debugf("[BUILDER] Cache miss: %s", runConfig.Cmd)
-			c.cacheBusted = true
-			return "", nil
-		}
-		if cacheID == "" {
-			cacheID = findID
-		} else if cacheID != findID {
-			logrus.Debugf("[BUILDER] Cache miss: %s", runConfig.Cmd)
-			c.cacheBusted = true
-			return "", nil
-		}
+	cacheID, err := c.cache.GetCache(parentID, runConfig)
+	if err != nil {
+		return "", err
+	}
+	if len(cacheID) == 0 {
+		logrus.Debugf("[BUILDER] Cache miss: %s", runConfig.Cmd)
+		c.cacheBusted = true
+		return "", nil
 	}
 	logrus.Debugf("[BUILDER] Use cached version: %s", runConfig.Cmd)
 	return cacheID, nil
@@ -84,6 +74,6 @@ func (c *nopProber) Reset(ctx context.Context) error {
 	return nil
 }
 
-func (c *nopProber) Probe(_ []string, _ *container.Config) (string, error) {
+func (c *nopProber) Probe(_ string, _ *container.Config) (string, error) {
 	return "", nil
 }

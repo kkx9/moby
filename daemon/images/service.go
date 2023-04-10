@@ -20,6 +20,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/singleflight"
+	"github.com/sirupsen/logrus"
 )
 
 type containerStore interface {
@@ -139,6 +140,8 @@ func (i *ImageService) CreateLayer(container *container.Container, initFunc laye
 		InitFunc:   initFunc,
 		StorageOpt: container.HostConfig.StorageOpt,
 	}
+
+	logrus.Debugf("MountLabel: %x", container.MountLabel)
 
 	return i.layerStore.CreateRWLayer(container.ID, layerID, rwLayerOpts)
 }

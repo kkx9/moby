@@ -161,6 +161,7 @@ func (is *store) Create(config []byte) (ID, error) {
 			return "", system.ErrNotSupportedOperatingSystem
 		}
 		l, err = is.lss.Get(layerID)
+		logrus.Debug("get layer id ", layerID)
 		if err != nil {
 			return "", errors.Wrapf(err, "failed to get layer %s", layerID)
 		}
@@ -203,9 +204,12 @@ func (is *store) Get(id ID) (*Image, error) {
 	// todo: Check if image is in images
 	// todo: Detect manual insertions and start using them
 	config, err := is.fs.Get(id.Digest())
+	logrus.Debugf("image store get:%s %s", id.Digest(), err)
 	if err != nil {
 		return nil, err
 	}
+
+	logrus.Debug("get config")
 
 	img, err := NewFromJSON(config)
 	if err != nil {
@@ -213,10 +217,14 @@ func (is *store) Get(id ID) (*Image, error) {
 	}
 	img.computedID = id
 
+	logrus.Debug("get image")
+
 	img.Parent, err = is.GetParent(id)
 	if err != nil {
 		img.Parent = ""
 	}
+
+	logrus.Debugf("get parent id %x", img.Parent)
 
 	return img, nil
 }

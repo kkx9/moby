@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // CommitImage creates a new image from a commit config
@@ -35,7 +36,9 @@ func (i *ImageService) CommitImage(c backend.CommitConfig) (image.ID, error) {
 	}
 
 	l, err := i.layerStore.Register(rwTar, parent.RootFS.ChainID())
+	logrus.Debug("chainID: ", parent.RootFS.ChainID())
 	if err != nil {
+		logrus.Debug("error chainID: ", parent.RootFS.ChainID())
 		return "", err
 	}
 	defer layer.ReleaseAndLog(i.layerStore, l)
@@ -55,11 +58,13 @@ func (i *ImageService) CommitImage(c backend.CommitConfig) (image.ID, error) {
 
 	id, err := i.imageStore.Create(config)
 	if err != nil {
+		logrus.Debug("error create:", string(config))
 		return "", err
 	}
 
 	if c.ParentImageID != "" {
 		if err := i.imageStore.SetParent(id, image.ID(c.ParentImageID)); err != nil {
+			logrus.Debug("error id:", id, image.ID(c.ParentImageID))
 			return "", err
 		}
 	}
@@ -118,5 +123,6 @@ func (i *ImageService) CommitBuildStep(c backend.CommitConfig) (image.ID, error)
 	c.ContainerMountLabel = ctr.MountLabel
 	c.ContainerOS = ctr.OS
 	c.ParentImageID = string(ctr.ImageID)
+	logrus.Debug("container id: ", c.ParentImageID)
 	return i.CommitImage(c)
 }

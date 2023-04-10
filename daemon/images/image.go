@@ -185,8 +185,10 @@ func (i *ImageService) GetImage(ctx context.Context, refOrID string, options ima
 	}()
 	ref, err := reference.ParseAnyReference(refOrID)
 	if err != nil {
+		logrus.Debug(err)
 		return nil, errdefs.InvalidParameter(err)
 	}
+	logrus.Debugf("reference name: %s", ref)
 	namedRef, ok := ref.(reference.Named)
 	if !ok {
 		digested, ok := ref.(reference.Digested)
@@ -212,6 +214,7 @@ func (i *ImageService) GetImage(ctx context.Context, refOrID string, options ima
 	if id, err := i.imageStore.Search(refOrID); err == nil {
 		img, err := i.imageStore.Get(id)
 		if err != nil {
+			logrus.Debug(err)
 			return nil, ErrImageDoesNotExist{ref}
 		}
 		return img, nil

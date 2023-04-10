@@ -335,8 +335,10 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 	}
 
 	if layer.parent == nil {
+		logrus.Debug("calc chainID: ",  layer.diffID)
 		layer.chainID = ChainID(layer.diffID)
 	} else {
+		logrus.Debug("calc chainID: ", layer.parent.chainID, layer.diffID)
 		layer.chainID = createChainIDFromParent(layer.parent.chainID, layer.diffID)
 	}
 
@@ -357,6 +359,7 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		return nil, err
 	}
 
+	logrus.Debug("Add layer: ", layer.chainID)
 	ls.layerMap[layer.chainID] = layer
 
 	return layer.getReference(), nil
@@ -364,6 +367,7 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 
 func (ls *layerStore) get(layer ChainID) *roLayer {
 	l, ok := ls.layerMap[layer]
+	logrus.Debug("debug layerMap: ", ls.layerMap)
 	if !ok {
 		return nil
 	}
@@ -510,6 +514,8 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, opts *CreateRWL
 	if string(parent) != "" {
 		ls.layerL.Lock()
 		p = ls.get(parent)
+		logrus.Debugf("Create RWLayer : %s", string(parent))
+		logrus.Debug(p)
 		ls.layerL.Unlock()
 		if p == nil {
 			return nil, ErrLayerDoesNotExist
@@ -535,6 +541,7 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, opts *CreateRWL
 	}
 
 	if initFunc != nil {
+		logrus.Debug("start init mount")
 		pid, err = ls.initMount(m.mountID, pid, mountLabel, initFunc, storageOpt)
 		if err != nil {
 			return
@@ -637,6 +644,7 @@ func (ls *layerStore) ReleaseRWLayer(l RWLayer) ([]Metadata, error) {
 }
 
 func (ls *layerStore) saveMount(mount *mountedLayer) error {
+	logrus.Debugf("mount layer %x", mount)
 	if err := ls.store.SetMountID(mount.name, mount.mountID); err != nil {
 		return err
 	}

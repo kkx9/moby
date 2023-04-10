@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/api/types/container"
 	containerpkg "github.com/docker/docker/container"
+	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 )
@@ -60,6 +61,8 @@ type Backend interface {
 	GetLastCacheID() string
 
 	ImageCacheBuilder
+
+	Depcache
 }
 
 // ImageBackend are the interface methods required from an image component
@@ -93,6 +96,11 @@ type Result struct {
 type ImageCacheBuilder interface {
 	// MakeImageCache creates a stateful image cache.
 	MakeImageCache(ctx context.Context, cacheFrom []string) (ImageCache, error)
+}
+
+type Depcache interface {
+	AddLayer(layerDigest string, depLayers []string, config *containertypes.Config, cacheID string)
+	CheckLayer(config *containertypes.Config, depLayers []string, imageLayers *[]layer.DiffID, cacheIDList *[]string) string
 }
 
 // ImageCache abstracts an image cache.

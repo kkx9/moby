@@ -29,7 +29,8 @@ type StoreBackend interface {
 // fs implements StoreBackend using the filesystem.
 type fs struct {
 	sync.RWMutex
-	root string
+	root 		string
+	digestCheck bool
 }
 
 const (
@@ -39,12 +40,17 @@ const (
 
 // NewFSStoreBackend returns new filesystem based backend for image.Store
 func NewFSStoreBackend(root string) (StoreBackend, error) {
-	return newFSStore(root)
+	return newFSStore(root, true)
 }
 
-func newFSStore(root string) (*fs, error) {
+func NewDepFSStoreBackend(root string) (StoreBackend, error) {
+	return newFSStore(root, false)
+}
+
+func newFSStore(root string, digestCheck bool) (*fs, error) {
 	s := &fs{
 		root: root,
+		digestCheck: digestCheck,
 	}
 	if err := os.MkdirAll(filepath.Join(root, contentDirName, string(digest.Canonical)), 0700); err != nil {
 		return nil, errors.Wrap(err, "failed to create storage backend")
@@ -95,12 +101,13 @@ func (s *fs) Get(dgst digest.Digest) ([]byte, error) {
 
 func (s *fs) get(dgst digest.Digest) ([]byte, error) {
 	content, err := os.ReadFile(s.contentFile(dgst))
+	logrus.Debugf("[fs] read file at:%s", s.contentFile(dgst))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get digest %s", dgst)
 	}
 
 	// todo: maybe optional
-	if digest.FromBytes(content) != dgst {
+	if s.digestCheck && digest.FromBytes(content) != dgst {
 		return nil, fmt.Errorf("failed to verify: %v", dgst)
 	}
 

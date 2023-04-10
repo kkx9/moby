@@ -1,10 +1,17 @@
+FROM alpine AS cppBuilder
+RUN apk add --no-cache g++
+COPY trans/test.cpp test.cpp
+RUN g++ -g -o test test.cpp
+RUN ./test
+
+FROM alpine AS pyBuilder
+RUN apk add --no-cache python3
+COPY trans/test.py test.py
+RUN python3 test.py && cat test.py
+
 FROM alpine
-RUN mkdir /a
-RUN mkdir /b
-WORKDIR /a
-RUN echo "test" > test.txt
-RUN echo "test2" > test2.txt
-RUN echo "test3" >> test2.txt
-WORKDIR /b
-RUN echo "test" > test.txt
+COPY --from=cppBuilder afile.dat afile.dat
+COPY --from=pyBuilder pyout.txt pyout.txt
+RUN echo 1 >> afile.dat && cat afile.dat
+RUN echo 1 >> pyout.txt && cat pyout.txt
 ENTRYPOINT [echo, "hello world!"]

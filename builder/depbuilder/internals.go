@@ -46,6 +46,7 @@ func (b *DepBuilder) commit(ctx context.Context, dispatchState *dispatchState, c
 }
 
 func (b *DepBuilder) commitContainer(dispatchState *dispatchState, id string, containerConfig *container.Config) error {
+
 	if b.disableCommit {
 		return nil
 	}
@@ -58,8 +59,22 @@ func (b *DepBuilder) commitContainer(dispatchState *dispatchState, id string, co
 		ContainerID:     id,
 	}
 
+	logrus.Debug("commit config: ", commitCfg)
+
 	imageID, err := b.docker.CommitBuildStep(commitCfg)
 	dispatchState.imageID = string(imageID)
+
+	b.checkBuildDepdency()
+	if len(b.newDepDigest) == 0 {
+		b.newDepDigest = append(b.newDepDigest, b.baseImageDigest)
+	}
+
+	b.docker.AddLayer(string(imageID), b.newDepDigest, containerConfig, b.traceManager.lastCacheID)
+	logrus.Debug("Add cache")
+	logrus.Debug(string(imageID))
+	logrus.Debug(b.newDepDigest)
+	logrus.Debug(containerConfig)
+
 	return err
 }
 
@@ -111,6 +126,9 @@ func (b *DepBuilder) exportImage(state *dispatchState, layer builder.RWLayer, pa
 	}
 
 	state.imageID = exportedImage.ImageID()
+	b.checkBuildDepdency()
+	logrus.Debug("export image")
+	b.docker.AddLayer(string(state.imageID), []string{b.baseImageDigest}, runConfig, b.traceManager.lastCacheID)
 	b.imageSources.Add(newImageMount(exportedImage, newLayer), platform)
 	return nil
 }
@@ -327,20 +345,40 @@ func getShell(c *container.Config, os string) []string {
 }
 
 func (b *DepBuilder) probeCache(dispatchState *dispatchState, runConfig *container.Config) (bool, error) {
-	// hard coding
-	// lf, err := os.Open("/tracee/tracee.log")
-	// b.traceManager.traceLog = lf
-	// stageId := b.traceManager.GetStageId()
-	// b.traceManager.traceLog.Close()
-	// logrus.Debug("stage ID is: " + stageId)
-	depdencyLayer := [] string {dispatchState.imageID}
-	// depdencyLayer := b.traceManager.GetDepLayer()
+	if len(b.depLayers) > b.traceManager.LayerCount-1 {
+		logrus.Debug("check dep cache")
+		depdencyLayer := [] string {}
+		for _,layerID := range b.depLayers[b.traceManager.LayerCount-1] {
+			depdencyLayer = append(depdencyLayer, b.layersDigest[layerID])
+			logrus.Debugf("%d layer: %s", layerID, b.layersDigest[layerID])
+		}
+		logrus.Debug(len(depdencyLayer))
+		logrus.Debug(b.baseImageDigest)
+		if len(depdencyLayer) == 0 {
+			depdencyLayer = append(depdencyLayer, b.baseImageDigest)
+		}
+		depCachedID := b.docker.CheckLayer(runConfig, depdencyLayer, &b.layerList, &b.cacheIDList)
+		if len(depCachedID) != 0 {
+			logrus.Debugf("[Dep Cache] Hit : %s", runConfig.Cmd)
+			logrus.Debugf("cache id is : %s", depCachedID)
+			fmt.Fprint (b.Stdout, " ---> Using cache\n")
+			dispatchState.imageID = depCachedID
+			b.newDepDigest = depdencyLayer
+			b.newDepLayer = b.depLayers[b.traceManager.LayerCount-1]
+			return true, nil
+		}
+		logrus.Debug("[Dep Cache]Miss")
+		logrus.Debug(depdencyLayer)
+		logrus.Debug(runConfig)
+		return false, nil
+	}
 	logrus.Debug("check cache")
 	logrus.Info(dispatchState)
-	cachedID, err := b.imageProber.Probe(depdencyLayer, runConfig)
+	cachedID, err := b.imageProber.Probe(dispatchState.imageID, runConfig)
 	if cachedID == "" || err != nil {
 		return false, err
 	}
+	logrus.Debugf("cache id is : %s", cachedID)
 	fmt.Fprint (b.Stdout, " ---> Using cache\n")
 
 	dispatchState.imageID = cachedID
@@ -358,6 +396,8 @@ func (b *DepBuilder) probeAndCreate(ctx context.Context, dispatchState *dispatch
 
 func (b *DepBuilder) create(ctx context.Context, runConfig *container.Config) (string, error) {
 	logrus.Debugf("[BUILDER] Command to be executed: %v", runConfig.Cmd)
+	logrus.Debugf("[BUILDER] Image is: %v", runConfig.Image)
+
 
 	hostConfig := hostConfigFromOptions(b.options)
 	container, err := b.containerManager.Create(ctx, runConfig, hostConfig)

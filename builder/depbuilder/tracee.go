@@ -8,6 +8,7 @@ import (
 	_ "strconv"
 	"time"
 	"encoding/json"
+	"io/ioutil"
 
 	"github.com/sirupsen/logrus"
 )
@@ -16,23 +17,28 @@ type Tracee struct {
 	traceLog 			*os.File
 	lastTime			int64
 	layerDigest			string
+	lastCacheID			string
 	LayerCount			int
-	layerDict			map[int]string
+	LayerDict			map[int]string
 	fileUpdateRecord	map[string]int
 	traceRecord			[]map[string]interface{}
 }
 
-const dockerStorgePath = "/var/lib/docker/vfs/dir/"
+const dockerStorgePath = "/var/lib/docker/aufs/diff/"
 
-var dockerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/vfs/dir/`)
+var dockerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/((aufs)|(vfs)|(overlay))/dir/`)
 
-var initLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/vfs/dir/[0-9a-zA-Z]+-init/`)
+var initLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/((aufs)|(vfs)|(overlay))/dir/[0-9a-zA-Z]+-init/`)
 
-var normalLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/vfs/dir/[0-9a-zA-Z]+/`)
+var normalLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/((aufs)|(vfs)|(overlay))/dir/[0-9a-zA-Z]+/`)
 
-var totalLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/vfs/dir/[0-9a-zA-Z]+(-init)/`)
+var totalLayerPrefix = regexp.MustCompile(`(?m)^/var/lib/docker/((aufs)|(vfs)|(overlay))/dir/[0-9a-zA-Z]+(-init)`)
 
-const normalLayerReg = `(?m)^/var/lib/docker/vfs/dir/`
+const normalLayerReg = `(?m)^/var/lib/docker/aufs/dir/`
+
+const writeFlag = (os.O_WRONLY | os.O_CREATE)
+
+const readWriteFlag = (os.O_RDWR | os.O_APPEND)
 
 
 
@@ -117,6 +123,26 @@ func (t *Tracee) UpdateTime() {
 // 	return keys
 // }
 
+func walkDir(path string, files []string) ([]string, error) {
+	dir, err := ioutil.ReadDir(path)
+	if err != nil {
+		return files, err
+	}
+
+	sep := string(os.PathSeparator)
+
+	for _, fi := range dir {
+		if fi.IsDir() {
+			files = append(files, path + sep + fi.Name())
+			files, err = walkDir(path + sep + fi.Name(), files)
+		} else {
+			files = append(files, path + sep + fi.Name())
+		}
+	}
+
+	return files, nil
+}
+
 func (t *Tracee) GetStageId() string {
 	for _, trace := range t.traceRecord {
 		argsList := trace["args"].([]interface{})
@@ -125,7 +151,7 @@ func (t *Tracee) GetStageId() string {
 			var re = regexp.MustCompile(`(?m)/[a-zA-Z0-9]*-init/`)
 			for _, match := range re.FindAllString(mkdirPath, -1) {
 				t.layerDigest = strings.TrimSuffix(strings.Trim(match,"//"), "-init")
-				logrus.Debugf("stage id is : %s", t.layerDigest)
+				// logrus.Debugf("stage id is : %s", t.layerDigest)
 				return t.layerDigest
 			}
 		}
@@ -133,9 +159,9 @@ func (t *Tracee) GetStageId() string {
 	return ""
 }
 
-func (t *Tracee) GetDepLayer() []int {
-	rL, _ := t.MatchTrace()
-	return rL
+func (t *Tracee) GetDepLayer() ([]int, []string) {
+	rL, rD, _ := t.MatchTrace()
+	return rL, rD
 	// for _, trace := range t.traceRecord {
 	// 	argsList := trace["args"].([]interface{})
 	// 	callPath := getPath(argsList)
@@ -156,7 +182,10 @@ func getPath(argsList []interface{}) string {
 	for _, arg := range argsList {
 		argMap := arg.(map[string]interface{})
 		if argMap["name"].(string) == "pathname" {
-			return argMap["value"].(string)
+			if strings.HasPrefix(argMap["value"].(string), `/`){
+				return argMap["value"].(string)
+			}
+			return `/` + argMap["value"].(string)
 		}
 	}
 	return ""
@@ -172,8 +201,44 @@ func getMode(argsList []interface{}) int {
 	return 0
 }
 
-func (t *Tracee) MatchTrace() ([]int, error) {
-	var openList, mkdirList []map[string]interface{}
+func (t *Tracee) checkUpdate(filePath string) bool {
+	fileStat, err := os.Stat(filePath)
+	if err != nil {
+		// logrus.Debugf("can not find file: %s %s", openPath, strings.Replace(openPath, t.layerDigest, t.lastCacheID, -1))
+		return false
+	} else if !fileStat.ModTime().Before(time.Unix(0, t.lastTime-t.lastTime%1000000000)){
+		// logrus.Debugf("file be updated: %s %s", filePath, fileStat.ModTime())
+		return true
+	} else {
+		// logrus.Debugf("file not be updated: %s %s", filePath, fileStat.ModTime())
+		return false
+	}
+}
+
+func checkFilepath(filePath string, fileMap map[string]bool) bool {
+	// logrus.Debugf("start check file path: %s", filePath)
+	if _, inMap := fileMap[filePath]; inMap {
+		return true
+	}
+	return false
+}
+
+func (t *Tracee) checkDir(filePath string) int {
+	var re = regexp.MustCompile(`/[^/]*$`)
+	dirPath := ""
+	// logrus.Debugf("start check dir path: %s", filePath)
+	for _,match := range re.FindAllString(filePath, -1) {
+		// logrus.Debugf("start check dir path: %s", dirPath)
+		if val, inMap := t.fileUpdateRecord[dirPath]; inMap && strings.Count(dirPath, "") > 0 {
+			return val
+		}
+		dirPath = strings.TrimSuffix(dirPath, match)
+	}
+	return -1
+}
+
+func (t *Tracee) MatchTrace() ([]int, []string, error) {
+	var openList []map[string]interface{}
 	t.traceRecord = t.traceRecord[:0]
 	// openList := make(map[string]interface{},)
 	// mkdirList := []map[string]interface{}{}
@@ -186,79 +251,151 @@ func (t *Tracee) MatchTrace() ([]int, error) {
 		trace, err := unmarshalTrace(line)
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if int64(trace["timestamp"].(float64)) <= t.lastTime{
 			continue
 		}
 
+		argsList := trace["args"].([]interface{})
+		callPath := getPath(argsList)
+
+		if strings.Contains(callPath, "-init") {
+			continue
+		}
+
 		t.traceRecord = append(t.traceRecord, trace)
 
 		if trace["eventName"] == "mkdir" || trace["eventName"] == "mkdirat" {
-			mkdirList = append(mkdirList, trace)
+			// mkdirList = append(mkdirList, trace)
+			continue
 		} else {
 			openList = append(openList, trace)
 		}
 	}
 
-	logrus.Debugf("lognum is %s", len(t.traceRecord))
+	t.traceLog.Truncate(0)
+	t.traceLog.Seek(0,0)
+
+	logrus.Debugf("lognum is %d", len(t.traceRecord))
 
 	t.GetStageId()
 
-	fileMap := make(map[string]bool)
+	// fileMap := make(map[string]bool)
 
-	for _, trace := range mkdirList {
-		argsList := trace["args"].([]interface{})
-		mkdirPath := getPath(argsList)
-		if strings.HasPrefix(mkdirPath, dockerStorgePath) {
-			//check layer
-			re := regexp.MustCompile(normalLayerReg + t.layerDigest + `/`)
-			if regMatch := re.FindAllString(mkdirPath, -1); len(regMatch) > 0 {
-				pathSuffix := strings.TrimPrefix(mkdirPath, dockerStorgePath + t.layerDigest + `/`)
-				if len(pathSuffix) > 0 {
-					if _, inMap := fileMap[pathSuffix]; inMap {
-						t.fileUpdateRecord[pathSuffix] = t.LayerCount
-						delete(fileMap, pathSuffix)
-					}
-				}		
-			}	
-		} else {
-			fileMap[mkdirPath] = true
-		}
-	}
+	// for _, trace := range mkdirList {
+	// 	argsList := trace["args"].([]interface{})
+	// 	mkdirPath := getPath(argsList)
+	// 	if strings.HasPrefix(mkdirPath, dockerStorgePath) {
+	// 		//check layer
+	// 		// re := regexp.MustCompile(normalLayerReg + t.layerDigest)
+	// 		// if regMatch := re.FindAllString(mkdirPath, -1); len(regMatch) > 0 {
+	// 		// 	pathSuffix := strings.TrimPrefix(mkdirPath, dockerStorgePath + t.layerDigest)
+	// 		// 	if len(pathSuffix) > 1 {
+	// 		// 		logrus.Debugf("find mkdir possible: %s", pathSuffix)
+	// 		// 		if _, inMap := fileMap[pathSuffix] ; inMap {
+	// 		// 			t.fileUpdateRecord[pathSuffix] = t.LayerCount
+	// 		// 			logrus.Debugf("find mkdir %s", pathSuffix)
+	// 		// 			delete(fileMap, pathSuffix)
+	// 		// 		}
+	// 		// 	}		
+	// 		// }	
+	// 		continue
+	// 	} else if trace["processName"] == "mkdir" || trace["processName"] == "mkdirat" {
+	// 		logrus.Debugf("find mkdir souce %s", mkdirPath)
+	// 		t.fileUpdateRecord[mkdirPath] = t.LayerCount
+	// 		// fileMap[mkdirPath] = true
+	// 	}
+	// }
 
 	depLayers := make(map[int]bool)
+	fileMap := make(map[string]bool)
 
 	for _, trace := range openList {
 		argsList := trace["args"].([]interface{})
 		openPath := getPath(argsList)
+		// logrus.Debugf("origin path: %s", openPath)
+		// openMode := getMode(argsList)
 		if strings.HasPrefix(openPath, dockerStorgePath) {
-			regMatch := normalLayerPrefix.FindAllString(openPath, -1)
-			for _, match := range regMatch {
-				filePath := strings.Trim(openPath, match)
-				val, isOk := t.fileUpdateRecord[`\` + filePath]
-				if isOk {
+			// if openMode & writeFlag != 0 {
+			// 	logrus.Debugf("check path: %s", openPath)
+			// 	regMatch := totalLayerPrefix.FindAllString(openPath, -1)
+			// 	for _, match := range regMatch{
+			// 		// write file
+			// 		filePath := strings.TrimPrefix(openPath, match)
+			// 		if t.checkUpdate(strings.Replace(openPath, t.layerDigest, t.lastCacheID, -1)) == true {
+			// 			t.fileUpdateRecord[filePath] = t.LayerCount
+			// 		}
+			// 	}
+			// }
+			
+			// regMatch := normalLayerPrefix.FindAllString(openPath, -1)
+			// for _, match := range regMatch {
+			// 	filePath := `/` + strings.TrimPrefix(openPath, match)
+			// 	val, isOk := t.fileUpdateRecord[filePath]
+			// 	if isOk && val != t.LayerCount {
+			// 		if checkFilepath(filePath, fileMap) == true {
+			// 			depLayers[val] = true
+			// 			logrus.Debugf("file dep: %s", filePath)	
+			// 		}
+			// 	}
+			// }
+			continue
+		} else {
+			if processName := trace["processName"].(string); !( strings.Contains(processName, "runc") || strings.Contains(processName, "docker") || strings.Contains(processName, "containerd") ) {
+				fileMap[openPath] = true
+				// logrus.Debugf("find open call: %s", openPath)
+			} 
+			val, isOk := t.fileUpdateRecord[openPath]
+			if isOk && val != t.LayerCount {
+				if checkFilepath(openPath, fileMap) == true {
 					depLayers[val] = true
+					// logrus.Debugf("file dep: %s", openPath)	
+					// logrus.Debugf("file dep layer: %d", val)
+					if dirDep := t.checkDir(openPath); dirDep != -1 {
+						depLayers[dirDep] = true
+						// logrus.Debugf("dir dep layer: %d", dirDep)
+					}
 				}
 			}
-			regMatch = totalLayerPrefix.FindAllString(openPath, -1)
-			for _, match := range regMatch{
-				openMode := getMode(argsList)
-				// write file
-				if (openMode & os.O_WRONLY) == os.O_WRONLY || (openMode & os.O_RDWR) == os.O_RDWR {
-					filePath := strings.Trim(openPath, match)
-					t.fileUpdateRecord[`\` + filePath] = t.LayerCount
-				}
-			}
+
+			// write file
+			// if openMode & writeFlag != 0 {
+			// 	fullPath := dockerStorgePath + t.lastCacheID + openPath
+			// 	if t.checkUpdate(fullPath) == true{
+			// 		t.fileUpdateRecord[openPath] = t.LayerCount
+			// 		for _, layerVal := range t.checkDir(openPath) {
+			// 			depLayers[layerVal] = true
+			// 		}
+			// 	}
+			// }
 		}
 	}
 
-	j := 0
-	keys := make([]int, len(depLayers))
-	for k := range depLayers {
-		keys[j] = k
-		j++
+	var updateFiles []string
+	var err error
+
+	updateFiles, err = walkDir(dockerStorgePath + t.lastCacheID, updateFiles)
+
+	logrus.Debugf("walk path : %s", dockerStorgePath + t.lastCacheID)
+
+	if err == nil {
+		for _, fi := range updateFiles {
+			t.fileUpdateRecord[strings.TrimPrefix(fi, dockerStorgePath + t.lastCacheID)] = t.LayerCount
+		}
+	} else {
+		logrus.Debug("empty layer")
 	}
-	return keys, nil
+
+	logrus.Debugf("last time %s %d", time.Unix(0, t.lastTime).Format("2006-01-02 15:04:05"), t.lastTime)
+
+	keys := []int{}
+	dL := []string{}
+	for k := range depLayers {
+		keys = append(keys,k)
+		dL = append(dL,t.LayerDict[k])
+		// logrus.Debugf("update deplayers:%d %s", k, t.LayerDict[k])
+	}
+	return keys, dL, nil
 }

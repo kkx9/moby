@@ -32,6 +32,7 @@ import (
 	"github.com/docker/docker/daemon/events"
 	_ "github.com/docker/docker/daemon/graphdriver/register" // register graph drivers
 	"github.com/docker/docker/daemon/images"
+	"github.com/docker/docker/depcache"
 	dlogger "github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/daemon/stats"
@@ -118,6 +119,8 @@ type Daemon struct {
 	// It stores metadata for the content store (used for manifest caching)
 	// This needs to be closed on daemon exit
 	mdDB *bbolt.DB
+
+	depCache			*depcache.Depcache
 }
 
 // StoreHosts stores the addresses the daemon is listening on
@@ -1090,10 +1093,19 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		}
 
 		imageRoot := filepath.Join(config.Root, "image", layerStore.DriverName())
-		ifs, err := image.NewFSStoreBackend(filepath.Join(imageRoot, "imagedb"))
+
+		var ifs image.StoreBackend
+		if d.UseDependencyBuilder() {
+			ifs, err = image.NewDepFSStoreBackend(filepath.Join(imageRoot, "imagedb"))
+		} else {
+			ifs, err = image.NewFSStoreBackend(filepath.Join(imageRoot, "imagedb"))
+		}
+
 		if err != nil {
 			return nil, err
 		}
+		
+		
 
 		// We have a single tag/reference store for the daemon globally. However, it's
 		// stored under the graphdriver. On host platforms which only support a single
@@ -1116,6 +1128,8 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		if err != nil {
 			return nil, err
 		}
+
+		d.depCache = depcache.NewDepcache(imageStore)
 
 		distributionMetadataStore, err := dmetadata.NewFSMetadataStore(filepath.Join(imageRoot, "distribution"))
 		if err != nil {

@@ -188,7 +188,7 @@ func (i *ImageService) GetImage(ctx context.Context, refOrID string, options ima
 		logrus.Debug(err)
 		return nil, errdefs.InvalidParameter(err)
 	}
-	logrus.Debugf("reference name: %s", ref)
+	// logrus.Debugf("reference name: %s", ref)
 	namedRef, ok := ref.(reference.Named)
 	if !ok {
 		digested, ok := ref.(reference.Digested)

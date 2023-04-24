@@ -281,6 +281,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 		}
 		dispatchRequest.state.updateRunConfig()
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
+		logrus.Debug("stage id:", dispatchRequest.state.imageID)
 		for _, cmd := range stage.Commands {
 			select {
 			case <-ctx.Done():
@@ -298,6 +299,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 				return nil, err
 			}
 			dispatchRequest.state.updateRunConfig()
+			logrus.Debug("stage id:", dispatchRequest.state.imageID)
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
 		if err := emitImageID(b.Aux, dispatchRequest.state); err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/moby/sys/signal"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 func dispatchEnv(ctx context.Context, d dispatchRequest, c *instructions.EnvCommand) error {
@@ -106,13 +107,16 @@ func dispatchCopy(ctx context.Context, d dispatchRequest, c *instructions.CopyCo
 	var err error
 	if c.From != "" {
 		im, err = d.getImageMount(ctx, c.From)
+		// logrus.Debug("[Copy image mount]:", im)
 		if err != nil {
 			return errors.Wrapf(err, "invalid from flag value %s", c.From)
 		}
 	}
 	copier := copierFromDispatchRequest(d, errOnSourceDownload, im)
+	// logrus.Debug("[Copy]:", copier)
 	defer copier.Cleanup()
 	copyInstruction, err := copier.createCopyInstruction(c.SourcesAndDest, "COPY")
+	// logrus.Debug(copyInstruction)
 	if err != nil {
 		return err
 	}
@@ -131,10 +135,12 @@ func (d *dispatchRequest) getImageMount(ctx context.Context, imageRefOrID string
 
 	var localOnly bool
 	stage, err := d.stages.get(imageRefOrID)
+	// logrus.Debug("[Get image ref]:", stage, " ", imageRefOrID)
 	if err != nil {
 		return nil, err
 	}
 	if stage != nil {
+		logrus.Debug("Image:", stage.Image)
 		imageRefOrID = stage.Image
 		localOnly = true
 	}

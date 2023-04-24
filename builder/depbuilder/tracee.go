@@ -9,6 +9,8 @@ import (
 	"time"
 	"encoding/json"
 	"io/ioutil"
+	"net"
+	"context"
 
 	"github.com/sirupsen/logrus"
 )
@@ -143,6 +145,47 @@ func walkDir(path string, files []string) ([]string, error) {
 	return files, nil
 }
 
+func (t *Tracee) CallTracee(com string) {
+	socket, err := net.DialUDP("udp", nil, &net.UDPAddr{
+		IP: net.IPv4(172, 17, 0, 1),
+		Port: 11451,
+	})
+	if err != nil {
+		logrus.Error("fail connect:", err)
+		return
+	}
+	defer socket.Close()
+	sendData := []byte(com)
+	_, err = socket.Write(sendData)
+	if err != nil {
+		logrus.Error("fail send:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(time.Second * 10))
+	defer cancel()
+	ch := make(chan struct{}, 0)
+	go func() {
+		data := make([]byte, 100)
+		_, _, err = socket.ReadFromUDP(data)
+		if err != nil {
+			logrus.Error("fail rece:", err)
+			ch <- struct{}{}
+			return
+		}
+		// logrus.Debug("rece:", string(data[:n]))
+		ch <- struct{}{}
+	}()
+
+	select {
+		case <- ch:
+			logrus.Debug("Done")
+		case <-ctx.Done():
+			logrus.Debug("Timeout")
+	}
+	
+}
+
 func (t *Tracee) GetStageId() string {
 	for _, trace := range t.traceRecord {
 		argsList := trace["args"].([]interface{})
@@ -159,9 +202,9 @@ func (t *Tracee) GetStageId() string {
 	return ""
 }
 
-func (t *Tracee) GetDepLayer() ([]int, []string) {
-	rL, rD, _ := t.MatchTrace()
-	return rL, rD
+func (t *Tracee) GetDepLayer() ([]int, []string, error) {
+	rL, rD, err := t.MatchTrace()
+	return rL, rD, err
 	// for _, trace := range t.traceRecord {
 	// 	argsList := trace["args"].([]interface{})
 	// 	callPath := getPath(argsList)
@@ -224,18 +267,33 @@ func checkFilepath(filePath string, fileMap map[string]bool) bool {
 }
 
 func (t *Tracee) checkDir(filePath string) int {
-	var re = regexp.MustCompile(`/[^/]*$`)
-	dirPath := ""
-	// logrus.Debugf("start check dir path: %s", filePath)
-	for _,match := range re.FindAllString(filePath, -1) {
-		// logrus.Debugf("start check dir path: %s", dirPath)
-		if val, inMap := t.fileUpdateRecord[dirPath]; inMap && strings.Count(dirPath, "") > 0 {
-			return val
-		}
-		dirPath = strings.TrimSuffix(dirPath, match)
+	// var re = regexp.MustCompile(`/[^/]*$`)
+	// dirPath := ""
+	// // logrus.Debugf("start check dir path: %s", filePath)
+	// for _,match := range re.FindAllString(filePath, -1) {
+	// 	// logrus.Debugf("start check dir path: %s", dirPath)
+	// 	if val, inMap := t.fileUpdateRecord[dirPath]; inMap && strings.Count(dirPath, "") > 0 {
+	// 		return val
+	// 	}
+	// 	dirPath = strings.TrimSuffix(dirPath, match)
+	// }
+
+	if val, inMap := t.fileUpdateRecord[filePath]; inMap {
+		return val
 	}
 	return -1
 }
+
+// func HashDir(filePaths []string, cacheID string) string {
+// 	sort.Slice(filePaths, func (i,j int) bool {
+// 		return filePaths[i] < filePaths[j]
+// 	})
+// 	for _, fi := range updateFiles {
+// 		filePath := strings.TrimPrefix(fi, dockerStorgePath + cacheID)
+// 		info, _ := os.Stat(fi)
+
+// 	}
+// }
 
 func (t *Tracee) MatchTrace() ([]int, []string, error) {
 	var openList []map[string]interface{}
@@ -275,8 +333,7 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 		}
 	}
 
-	t.traceLog.Truncate(0)
-	t.traceLog.Seek(0,0)
+	t.CallTracee("Clear")
 
 	logrus.Debugf("lognum is %d", len(t.traceRecord))
 
@@ -348,7 +405,7 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 				// logrus.Debugf("find open call: %s", openPath)
 			} 
 			val, isOk := t.fileUpdateRecord[openPath]
-			if isOk && val != t.LayerCount {
+			if isOk {
 				if checkFilepath(openPath, fileMap) == true {
 					depLayers[val] = true
 					// logrus.Debugf("file dep: %s", openPath)	
@@ -385,7 +442,7 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 			t.fileUpdateRecord[strings.TrimPrefix(fi, dockerStorgePath + t.lastCacheID)] = t.LayerCount
 		}
 	} else {
-		logrus.Debug("empty layer")
+		return nil, nil, err
 	}
 
 	logrus.Debugf("last time %s %d", time.Unix(0, t.lastTime).Format("2006-01-02 15:04:05"), t.lastTime)

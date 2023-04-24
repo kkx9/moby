@@ -62,20 +62,20 @@ func (daemon *Daemon) containerCreate(ctx context.Context, opts createOpts) (con
 		return containertypes.CreateResponse{}, errdefs.InvalidParameter(errors.New("Config cannot be empty in order to create a container"))
 	}
 
-	logrus.Debug("No para error")
+	// logrus.Debug("No para error")
 
 	warnings, err := daemon.verifyContainerSettings(opts.params.HostConfig, opts.params.Config, false)
 	if err != nil {
 		return containertypes.CreateResponse{Warnings: warnings}, errdefs.InvalidParameter(err)
 	}
 
-	logrus.Debug("No setting error")
+	// logrus.Debug("No setting error")
 
 	if opts.params.Platform == nil && opts.params.Config.Image != "" {
 		img, err := daemon.imageService.GetImage(ctx, opts.params.Config.Image, imagetypes.GetImageOpts{Platform: opts.params.Platform})
-		logrus.Debug("Get image")
+		// logrus.Debug("Get image")
 		if err != nil {
-			logrus.Debug(err)
+			// logrus.Debug(err)
 			return containertypes.CreateResponse{}, err
 		}
 		if img != nil {
@@ -105,7 +105,7 @@ func (daemon *Daemon) containerCreate(ctx context.Context, opts createOpts) (con
 		return containertypes.CreateResponse{Warnings: warnings}, errdefs.InvalidParameter(err)
 	}
 
-	logrus.Debug("creating container...")
+	// logrus.Debug("creating container...")
 
 	ctr, err := daemon.create(ctx, opts)
 	if err != nil {
@@ -135,7 +135,7 @@ func (daemon *Daemon) create(ctx context.Context, opts createOpts) (retC *contai
 		if err != nil {
 			return nil, err
 		}
-		logrus.Debugf("Get image %s", img.ID())
+		// logrus.Debugf("Get image %s", img.ID())
 		os = img.OperatingSystem()
 		imgID = img.ID()
 	} else if isWindows {
@@ -158,13 +158,13 @@ func (daemon *Daemon) create(ctx context.Context, opts createOpts) (retC *contai
 		return nil, errdefs.InvalidParameter(err)
 	}
 
-	logrus.Debug("start creating container")
+	// logrus.Debug("start creating container")
 
 	if ctr, err = daemon.newContainer(opts.params.Name, os, opts.params.Config, opts.params.HostConfig, imgID, opts.managed); err != nil {
 		return nil, err
 	}
 
-	logrus.Debug("container created")
+	// logrus.Debug("container created")
 
 	defer func() {
 		if retErr != nil {
@@ -184,8 +184,8 @@ func (daemon *Daemon) create(ctx context.Context, opts createOpts) (retC *contai
 
 	ctr.HostConfig.StorageOpt = opts.params.HostConfig.StorageOpt
 
-	logrus.Debug(ctr.HostConfig.StorageOpt)
-	logrus.Debug(daemon.idMapping)
+	// logrus.Debug(ctr.HostConfig.StorageOpt)
+	// logrus.Debug(daemon.idMapping)
 
 	// Set RWLayer for container after mount labels have been set
 	rwLayer, err := daemon.imageService.CreateLayer(ctr, setupInitLayer(daemon.idMapping))

@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"strings"
+	"compress/gzip"
+	"io/ioutil"
 
 	"github.com/docker/distribution"
 	"github.com/docker/docker/daemon/graphdriver"
@@ -18,6 +21,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vbatts/tar-split/tar/asm"
 	"github.com/vbatts/tar-split/tar/storage"
+	"github.com/docker/docker/pkg/tarsum"
+
 )
 
 // maxLayerDepth represents the maximum number of
@@ -267,6 +272,52 @@ func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
 	return ls.registerWithDescriptor(ts, parent, distribution.Descriptor{})
 }
 
+func registeLayerHash(chain ChainID, cacheID string) {
+	// logrus.Debugf("register layer:%s with %s", chain.String(), cacheID)
+
+	openFile := `/var/lib/docker/image/aufs/layerdb/sha256/` + strings.TrimPrefix(chain.String(), "sha256:") + `/tar-split.json.gz`
+	// logrus.Debugf("Open: %s", openFile)
+	mf, err := os.Open(openFile)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer mf.Close()
+
+	mfz, err := gzip.NewReader(mf)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer mfz.Close()
+
+	metaUnpacker := storage.NewJSONUnpacker(mfz)
+	fileGetter := storage.NewPathFileGetter(`/var/lib/docker/aufs/diff/` + cacheID)
+
+	ots := asm.NewOutputTarStream(fileGetter, metaUnpacker)
+	defer ots.Close()
+
+	tarPath := `/var/lib/docker/image/aufs/layerdb/sha256/` + strings.TrimPrefix(chain.String(), "sha256:") + `/tar.gz`
+	// logrus.Debug("Tar path:%s", tarPath)
+	fh, err := os.Create(tarPath)
+	defer fh.Close()
+
+	_, err = io.Copy(fh, ots)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	tr, _ := os.Open(tarPath)
+	defer tr.Close()
+	newTarSum, _ := tarsum.NewTarSum(tr, true, tarsum.Version1)
+	io.Copy(ioutil.Discard, newTarSum)
+	tarSum := newTarSum.Sum(nil)
+	logrus.Debugf("calc tarsum:%s", tarSum)
+
+	tarFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/tarsum.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	fmt.Fprintf(tarFile,"(%s,%s)\n", cacheID, tarSum)
+	tarFile.Close()
+
+}
+
 func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descriptor distribution.Descriptor) (Layer, error) {
 	// err is used to hold the error which will always trigger
 	// cleanup of creates sources but may not be an error returned
@@ -335,10 +386,10 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 	}
 
 	if layer.parent == nil {
-		logrus.Debug("calc chainID: ",  layer.diffID)
+		// logrus.Debug("calc chainID: ",  layer.diffID)
 		layer.chainID = ChainID(layer.diffID)
 	} else {
-		logrus.Debug("calc chainID: ", layer.parent.chainID, layer.diffID)
+		// logrus.Debug("calc chainID: ", layer.parent.chainID, layer.diffID)
 		layer.chainID = createChainIDFromParent(layer.parent.chainID, layer.diffID)
 	}
 
@@ -359,7 +410,9 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		return nil, err
 	}
 
-	logrus.Debug("Add layer: ", layer.chainID)
+	registeLayerHash(layer.chainID, layer.cacheID)
+
+	// logrus.Debug("Add layer: ", layer.chainID)
 	ls.layerMap[layer.chainID] = layer
 
 	return layer.getReference(), nil
@@ -367,7 +420,7 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 
 func (ls *layerStore) get(layer ChainID) *roLayer {
 	l, ok := ls.layerMap[layer]
-	logrus.Debug("debug layerMap: ", ls.layerMap)
+	// logrus.Debug("debug ChainID: ", layer)
 	if !ok {
 		return nil
 	}
@@ -514,8 +567,8 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, opts *CreateRWL
 	if string(parent) != "" {
 		ls.layerL.Lock()
 		p = ls.get(parent)
-		logrus.Debugf("Create RWLayer : %s", string(parent))
-		logrus.Debug(p)
+		// logrus.Debugf("Create RWLayer : %s", string(parent))
+		// logrus.Debug(p)
 		ls.layerL.Unlock()
 		if p == nil {
 			return nil, ErrLayerDoesNotExist
@@ -541,7 +594,7 @@ func (ls *layerStore) CreateRWLayer(name string, parent ChainID, opts *CreateRWL
 	}
 
 	if initFunc != nil {
-		logrus.Debug("start init mount")
+		// logrus.Debug("start init mount")
 		pid, err = ls.initMount(m.mountID, pid, mountLabel, initFunc, storageOpt)
 		if err != nil {
 			return
@@ -644,7 +697,7 @@ func (ls *layerStore) ReleaseRWLayer(l RWLayer) ([]Metadata, error) {
 }
 
 func (ls *layerStore) saveMount(mount *mountedLayer) error {
-	logrus.Debugf("mount layer %x", mount)
+	// logrus.Debugf("mount layer %x", mount)
 	if err := ls.store.SetMountID(mount.name, mount.mountID); err != nil {
 		return err
 	}

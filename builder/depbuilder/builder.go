@@ -10,6 +10,9 @@ import (
 	"bufio"
 	"os"
 	"strconv"
+	"runtime/pprof"
+	"crypto/rand"
+	"math/big"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api/types"
@@ -316,7 +319,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 	stagesResults := newStagesBuildResults()
 	// stageInd := map[string]int{}
-	logrus.Debug(totalCommands)
+	// logrus.Debug(totalCommands)
 
 	// start tracee
 
@@ -347,9 +350,9 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 				matchRow++
 				sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
 				depLine := strings.TrimSpace(depFileReader.Text())
-				logrus.Debug(depLine)
+				// logrus.Debug(depLine)
 				depSlice := transIntSlice(strings.Split(depLine, " "))
-				logrus.Debug(depSlice)
+				// logrus.Debug(depSlice)
 				if sourceCode == fmt.Sprintf("%s", cmd){
 					b.depLayers = append(b.depLayers, depSlice)
 				} else {
@@ -358,7 +361,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 				}
 			}
 		}
-		logrus.Debug(b.depLayers)
+		// logrus.Debug(b.depLayers)
 	}
 
 	bd, err := b.docker.ApplyBuildHistory(b.options.Dockerfile)
@@ -367,13 +370,18 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	}
 	b.depInfo = bd
 
-	logrus.Debug(b.depInfo.DepFile, b.depInfo.DockerfileArch)
+	// logrus.Debug(b.depInfo.DepFile, b.depInfo.DockerfileArch)
 
 	//init writer
 	dockerfileArchWriter := bufio.NewWriter(b.depInfo.DockerfileArch)
 	defer b.depInfo.DockerfileArch.Close()
 	depFileWriter := bufio.NewWriter(b.depInfo.DepFile)
 	defer b.depInfo.DepFile.Close()
+
+	//pref
+	rid, _ := rand.Int(rand.Reader, big.NewInt(100000))
+	pf, _ := os.Create(`/var/lib/docker/` + rid.String() + ".pprof")
+	pprof.StartCPUProfile(pf)
 
 	for _, s := range parseResult {
 		stage := s
@@ -382,15 +390,17 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		}
 		dispatchRequest = newDispatchRequest(b, escapeToken, source, buildArgs, stagesResults)
 
-		logrus.Debug(stage.BaseName)
-		logrus.Debug(fmt.Sprintf("%s\n", stage.SourceCode))
+		// logrus.Debug(stage.BaseName)
+		// logrus.Debug(fmt.Sprintf("%s\n", stage.SourceCode))
 		dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", stage.SourceCode))
 		depFileWriter.WriteString(fmt.Sprintf("-1\n"))
 
 		currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, stage.SourceCode)
+		b.traceManager.CallTracee("Open")
 		if err := initializeStage(ctx, dispatchRequest, &stage); err != nil {
 			return nil, err
 		}
+		b.traceManager.CallTracee("Close")
 		
 		dispatchRequest.state.updateRunConfig()
 		b.layersDigest[currentCommandIndex-1] = dispatchRequest.state.imageID
@@ -411,20 +421,20 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			}
 
 			// Start tracee to record
-			logrus.Debug(fmt.Sprintf("%s\n", cmd))
+			// logrus.Debug(fmt.Sprintf("%s\n", cmd))
 			
 			dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", cmd))
-			logrus.Debug("Start tracee")
+			// logrus.Debug("Start tracee")
 			currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, cmd)
 			
 			// get layer id && check depdency trace
 			b.traceManager.LayerCount = currentCommandIndex - 1
+			b.traceManager.CallTracee("Open")
 			b.traceManager.UpdateTime()
-
-
 			if err := dispatch(ctx, dispatchRequest, cmd); err != nil {
 				return nil, err
 			}
+			b.traceManager.CallTracee("Close")
 
 			b.updateLayerList(dispatchRequest.state.imageID)
 
@@ -434,7 +444,7 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			logrus.Debugf("the %d layer digest: %s", currentCommandIndex-1, dispatchRequest.state.imageID)
 			
 			for _,k := range b.newDepLayer{
-				logrus.Debugf("depStage is: %d", k)
+				// logrus.Debugf("depStage is: %d", k)
 				depFileWriter.WriteString(fmt.Sprintf("%d ", k))
 			}
 			depFileWriter.WriteString("\n")
@@ -444,16 +454,23 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 			dispatchRequest.state.updateRunConfig()
 
-			logrus.Debug("check cacheID list: ", b.cacheIDList)
+			// logrus.Debug("check cacheID list: ", b.cacheIDList)
 
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
-
 		// End tracee and record
-		logrus.Debug("End tracee")
+		// logrus.Debug("End tracee")
 
 		dockerfileArchWriter.Flush()
 		depFileWriter.Flush()
+
+		cacheFile ,_ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+		for _,v := range b.cacheIDList {
+			fmt.Fprintf(cacheFile,"%s\n", v)
+		}
+		cacheFile.Close()
+
+		b.cacheIDList = b.cacheIDList[:0]
 
 		if err := emitImageID(b.Aux, dispatchRequest.state); err != nil {
 			return nil, err
@@ -463,11 +480,19 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 			return nil, err
 		}
 	}
+
+	pprof.StopCPUProfile()
+	pf.Close()
+
+	// cacheFile ,_ := os.Open("/go/src/github.com/docker/docker/trans/buildcache.log", "a+")
+
+	// b.cacheIDList = b.cacheIDList[:0]
+
 	buildArgs.WarnOnUnusedBuildArgs(b.Stdout)
 	return dispatchRequest.state, nil
 }
 
-func (b *DepBuilder) checkBuildDepdency() {
+func (b *DepBuilder) checkBuildDepdency() bool {
 	// hard coding
 	lf, _ := os.Open("/tracee/tracee.log")
 	b.traceManager.traceLog = lf
@@ -485,14 +510,22 @@ func (b *DepBuilder) checkBuildDepdency() {
 			}
 		}
 	}
-	b.cacheIDList = append(b.cacheIDList, stageID)
 	b.traceManager.lastCacheID = stageID
 
-	b.newDepLayer, b.newDepDigest = b.traceManager.GetDepLayer()
+	var err error
+	flag := true
+	b.newDepLayer, b.newDepDigest, err = b.traceManager.GetDepLayer()
+
+	if err == nil {
+		b.cacheIDList = append(b.cacheIDList, stageID)
+	} else {
+		flag = false
+	}
 
 	b.traceManager.traceLog.Close()
 
 	logrus.Debugf("get cache id %s", stageID)
+	return flag
 }
 
 func (b *DepBuilder) initLayerList(layerDigest string) {

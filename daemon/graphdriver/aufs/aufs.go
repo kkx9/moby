@@ -519,7 +519,7 @@ func (a *Driver) mount(id string, target string, mountLabel string, layers []str
 
 	rw := a.getDiffPath(id)
 
-	logrus.Debugf("aufs mount : %s | %s  | %s | %s | %x", id, target, mountLabel,rw, layers)
+	// logrus.Debugf("aufs mount : %s | %s  | %s | %s | %x", id, target, mountLabel,rw, layers)
 
 	if err := a.aufsMount(layers, rw, target, mountLabel); err != nil {
 		return fmt.Errorf("error creating aufs mount to %s: %v", target, err)
@@ -593,8 +593,8 @@ func (a *Driver) aufsMount(ro []string, rw, target, mountLabel string) (err erro
 	a.mntL.Lock()
 	err = unix.Mount("none", target, "aufs", 0, data)
 	a.mntL.Unlock()
-	logrus.Debugf("aufs mount args: %s | %s ",  target, data)
-	logrus.Debug(os.Stat(target))
+	// logrus.Debugf("aufs mount args: %s | %s ",  target, data)
+	// logrus.Debug(os.Stat(target))
 	if err != nil {
 		err = errors.Wrap(err, "mount target="+target+" data="+data)
 		return

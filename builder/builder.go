@@ -99,7 +99,7 @@ type ImageCacheBuilder interface {
 }
 
 type Depcache interface {
-	AddLayer(layerDigest string, depLayers []string, config *containertypes.Config, cacheID string)
+	AddLayer(layerDigest string, depLayers []string, config *containertypes.Config, cacheID string, flag bool)
 	CheckLayer(config *containertypes.Config, depLayers []string, imageLayers *[]layer.DiffID, cacheIDList *[]string) string
 }
 

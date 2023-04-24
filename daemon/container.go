@@ -156,8 +156,8 @@ func (daemon *Daemon) newContainer(name string, operatingSystem string, config *
 	base.Name = name
 	base.Driver = daemon.imageService.StorageDriver()
 	base.OS = operatingSystem
-	logrus.Debug("New container config")
-	logrus.Debug(config)
+	// logrus.Debug("New container config")
+	// logrus.Debug(config)
 	return base, err
 }
 

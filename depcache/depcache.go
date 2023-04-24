@@ -22,6 +22,7 @@ type Depcache struct {
 	store 			image.Store
 	hackMap			map[string]bool
 	hackHash		map[string]string
+	emptyLayer		map[string]bool
 }
 
 func NewDepcache(store image.Store) *Depcache {
@@ -33,6 +34,7 @@ func NewDepcache(store image.Store) *Depcache {
 		hackImageSlice:	[][2]string{},
 		hackMap:		make(map[string]bool),
 		hackHash:		make(map[string]string),
+		emptyLayer:		make(map[string]bool),
 	}
 	return c
 }
@@ -43,7 +45,7 @@ func (d *Depcache) depLayerHash(layers []string) string {
 	return fmt.Sprintf("%x",sha256.Sum256([]byte(layerString)))
 }
 
-func (d *Depcache) AddLayer(layerDigest string, depLayers []string, config *containertypes.Config, cacheID string) {
+func (d *Depcache) AddLayer(layerDigest string, depLayers []string, config *containertypes.Config, cacheID string, flag bool) {
 	// d.unhackImage()
 	depHash := d.depLayerHash(depLayers)
 	d.cacheIDMap[layerDigest] = cacheID
@@ -55,17 +57,21 @@ func (d *Depcache) AddLayer(layerDigest string, depLayers []string, config *cont
 	}
 	d.cacheMap[depHash] = append(d.cacheMap[depHash], layerDigest)
 	d.configMap[layerDigest] = config
+	d.emptyLayer[layerDigest] = flag
 } 
 
 func (d *Depcache) CheckLayer(config *containertypes.Config, depLayers []string, imageLayers *[]layer.DiffID, cacheIDList *[]string) string {
+	logrus.Debugf("[Dep Cahce]:check")
 	// d.unhackImage()
 	depHash := d.depLayerHash(depLayers)
 	for _,v:=range d.cacheMap[depHash] {
-		logrus.Debug(v)
-		logrus.Debug(d.configMap[v])
+		// logrus.Debug(v)
+		// logrus.Debug(d.configMap[v])
 		if compare(d.configMap[v], config) {
 			if _, err := d.store.Get(image.ID(v)); err == nil {
-				*cacheIDList = append(*cacheIDList, d.cacheIDMap[v])
+				if d.emptyLayer[v] == true {
+					*cacheIDList = append(*cacheIDList, d.cacheIDMap[v])
+				}
 				d.hackImage(v, imageLayers, cacheIDList)
 				return v
 			} else{
@@ -79,9 +85,9 @@ func (d *Depcache) CheckLayer(config *containertypes.Config, depLayers []string,
 func(d *Depcache) hackImage(layerDigest string, imageLayers *[]layer.DiffID, cacheIDList *[]string) {
 	logrus.Debugf("hack image info: %s", layerDigest)
 	d.hackLayers(cacheIDList)
-	for _,v := range *cacheIDList {
-		logrus.Debugf("cache id:%s", v)
-	}
+	// for _,v := range *cacheIDList {
+	// 	logrus.Debugf("cache id:%s", v)
+	// }
 	imageFile := `/var/lib/docker/image/aufs/imagedb/content/sha256/` + strings.TrimPrefix(layerDigest, "sha256:")
 	archFile := imageFile + ".arch"
 	content, err := os.ReadFile(imageFile)
@@ -111,8 +117,8 @@ diff:
 		im.RootFS.DepChainID = layer.CreateChainID(im.RootFS.DiffIDs)
 
 	}
-	logrus.Debug(im.RootFS.DiffIDs)
-	logrus.Debug(*imageLayers)
+	// logrus.Debug(im.RootFS.DiffIDs)
+	// logrus.Debug(*imageLayers)
 
 	for i := 0; i < len(*imageLayers) && i < len(im.RootFS.DiffIDs); i++ {
 		im.RootFS.DiffIDs[i] = (*imageLayers)[i]
@@ -146,17 +152,17 @@ func(d *Depcache) hackLayers(cacheIDList *[]string) {
 		hash := d.depLayerHash(outSlice)
 		if d.hackMap[v] == false || d.hackHash[v] != hash {
 			layerFile := `/var/lib/docker/aufs/layers/` + strings.TrimPrefix(v, "sha256:")
-			logrus.Debug(layerFile)
+			// logrus.Debug(layerFile)
 
-			content, err := os.ReadFile(layerFile)
-			if err != nil {
-				fmt.Println(err)
-			}
-			logrus.Debug("arch content:",(string(content)))
+			// content, err := os.ReadFile(layerFile)
+			// if err != nil {
+			// 	fmt.Println(err)
+			// }
+			// logrus.Debug("arch content:",(string(content)))
 			
 			archFile := layerFile + ".arch"
 
-			err = os.Rename(layerFile, archFile)
+			err := os.Rename(layerFile, archFile)
 			if err != nil {
 				logrus.Error(err)
 			}
@@ -166,7 +172,7 @@ func(d *Depcache) hackLayers(cacheIDList *[]string) {
 			}
 			datawriter := bufio.NewWriter(file)
 			for i:=len(outSlice) - 1; i>=0; i-- {
-				logrus.Debug(outSlice[i])
+				// logrus.Debug(outSlice[i])
 				_, _ = datawriter.WriteString(outSlice[i] + "\n")
 			}
 			datawriter.Flush()

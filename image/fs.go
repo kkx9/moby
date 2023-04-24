@@ -101,7 +101,7 @@ func (s *fs) Get(dgst digest.Digest) ([]byte, error) {
 
 func (s *fs) get(dgst digest.Digest) ([]byte, error) {
 	content, err := os.ReadFile(s.contentFile(dgst))
-	logrus.Debugf("[fs] read file at:%s", s.contentFile(dgst))
+	// logrus.Debugf("[fs] read file at:%s", s.contentFile(dgst))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get digest %s", dgst)
 	}

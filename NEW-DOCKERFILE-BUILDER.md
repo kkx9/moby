@@ -8,7 +8,7 @@ docker run --rm --privileged  -e DOCKER_CROSSPLATFORMS -e BUILD_APT_MIRROR -e BU
 
 hack/make.sh binary install-binary run
 
-docker run  --name tracee --rm -it  --pid=host --cgroupns=host --privileged  -v /etc/os-release:/etc/os-release-host:ro -v /home/copyright/tracee_test:/tmp  -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host aquasec/tracee:0.9.3 trace --trace container --trace event=security_file_open,open* --trace open.pathname!="/var/run/docker/runtime-runc/*" --trace openat.pathname!="/var/run/docker/runtime-runc/*" --trace security_file_open.pathname!="/var/run/docker/runtime-runc/*" --output out-file:/tmp/tracee.log --output json
+docker run  --name tracee --rm -it  --pid=host --cgroupns=host --privileged  -v /etc/os-release:/etc/os-release-host:ro -v /home/copyright/tracee_test:/tmp  -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host aquasec/tracee:0.9.3 trace --trace container --trace event=security_file_open,open,openat --trace open.pathname!="/var/run/docker/runtime-runc/*" --trace openat.pathname!="/var/run/docker/runtime-runc/*" --trace security_file_open.pathname!="/var/run/docker/runtime-runc/*" --trace open.pathname!="/var/lib/docker/aufs/diff/*" --trace openat.pathname!="/var/lib/docker/aufs/diff/*" --trace security_file_open.pathname!="/var/lib/docker/aufs/diff/*" --output out-file:/tmp/tracee.log --output json
 
 
 FROM alpine

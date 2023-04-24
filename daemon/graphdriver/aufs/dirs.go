@@ -8,7 +8,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/sirupsen/logrus"
+	_ "github.com/sirupsen/logrus"
 )
 
 // Return all the directories
@@ -33,7 +33,7 @@ func loadIds(root string) ([]string, error) {
 // and an empty slice is returned.
 func getParentIDs(root, id string) ([]string, error) {
 	f, err := os.Open(path.Join(root, "layers", id))
-	logrus.Debugf("Open file: %s", path.Join(root, "layers", id))
+	// logrus.Debugf("Open file: %s", path.Join(root, "layers", id))
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func getParentIDs(root, id string) ([]string, error) {
 			out = append(out, s.Text())
 		}
 	}
-	logrus.Debug(out)
+	// logrus.Debug(out)
 	return out, s.Err()
 }
 

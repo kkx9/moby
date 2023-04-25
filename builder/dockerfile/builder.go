@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"os"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api/types"
@@ -267,7 +268,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 	}
 
 	stagesResults := newStagesBuildResults()
-
+	cacheFile ,_ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
 	for _, s := range parseResult {
 		stage := s
 		if err := stagesResults.checkStageNameAvailable(stage.Name); err != nil {
@@ -282,6 +283,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 		dispatchRequest.state.updateRunConfig()
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		logrus.Debug("stage id:", dispatchRequest.state.imageID)
+		fmt.Fprintf(cacheFile,"(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
 		for _, cmd := range stage.Commands {
 			select {
 			case <-ctx.Done():
@@ -300,6 +302,8 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 			}
 			dispatchRequest.state.updateRunConfig()
 			logrus.Debug("stage id:", dispatchRequest.state.imageID)
+			fmt.Fprintf(cacheFile,"(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
+			
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		}
 		if err := emitImageID(b.Aux, dispatchRequest.state); err != nil {
@@ -310,6 +314,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 			return nil, err
 		}
 	}
+	cacheFile.Close()
 	buildArgs.WarnOnUnusedBuildArgs(b.Stdout)
 	return dispatchRequest.state, nil
 }

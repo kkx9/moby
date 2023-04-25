@@ -1,18 +1,56 @@
-import re
-# /var/lib/docker/vfs/dir/885c739c431d87ee6f0509c4bc39d27dc645c0a44c1cde7ee76becbb27c0327e
-f = open("mkdir.log","r")
-lines = f.readlines()
+from collections import defaultdict
 
-init_regex = r"var\/lib\/docker\/vfs\/dir\/[0-9a-zA-z]+-init\/"
+tarsumDict = defaultdict(str)
+tarSumDict = defaultdict(str)
 
-regular_regax = r"var\/lib\/docker\/vfs\/dir\/[0-9a-zA-z]+\/"
+tarSum = open("tarsum.log","r")
+lines = tarSum.readlines()
+for line in lines:
+    tmp = line.strip().strip('(').strip(')').split(',')
+    tarsumDict[tmp[0]] = tmp[1]
 
-for line in lines[1500:1700]:
-    for arg in line.split(', '):
-        matches = re.search(regular_regax, arg)
-        if matches:
-            if not arg.endswith(matches.group()):
-                print('--------------------------------------------')
-                print(arg)
-                print(arg.replace(matches.group(),''))
-        
+tarSum = open("tarsum.log.v1","r")
+lines = tarSum.readlines()
+for line in lines:
+    tmp = line.strip().strip('(').strip(')').split(',')
+    tarSumDict[tmp[0]] = tmp[1]
+
+buildlog = open("buildcache.log", "r")
+lines = buildlog.readlines()
+i = 0
+commit = ""
+tarSumList = []
+tmpDict = defaultdict(str)
+commitDict = {}
+while i < len(lines):
+    line = lines[i]
+    if line.startswith("commit"):
+        commitDict[commit] = tarSumList
+        tarSumList = []
+        commit = line.strip().replace("commit:","")
+    else :
+        tmp = line.strip().strip('(').strip(')').split(',')
+        if tmpDict[tmp[0]] == "":
+            tmpDict[tmp[0]] = tarsumDict[tmp[1]]
+        tarSumList.append(tmpDict[tmp[0]])
+    i += 1
+commitDict[commit] = tarSumList
+
+buildlog = open("buildcache.log.v1", "r")
+lines = buildlog.readlines()
+commit = ""
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if line.startswith("commit"):
+        if i != 0:
+            print(commit)
+            for layer in tarSumList[-3:]:
+                if not layer in commitDict[commit]:
+                    print(layer)
+        tarSumList = []
+        commit = line.strip().replace("commit:","")
+    else :
+        tmp = line.strip()
+        tarSumList.append(tarSumDict[tmp])
+    i += 1

@@ -117,7 +117,7 @@ func (b *Builder) performCopy(ctx context.Context, req dispatchRequest, inst cop
 		chownComment = fmt.Sprintf("--chown=%s", inst.chownStr)
 	}
 	commentStr := fmt.Sprintf("%s %s%s in %s ", inst.cmdName, chownComment, srcHash, inst.dest)
-
+	// logrus.Debug(commentStr)
 	// TODO: should this have been using origPaths instead of srcHash in the comment?
 	runConfigWithCommentCmd := copyRunConfig(
 		state.runConfig,

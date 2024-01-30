@@ -3,19 +3,19 @@ from collections import defaultdict
 tarsumDict = defaultdict(str)
 tarSumDict = defaultdict(str)
 
-tarSum = open("tarsum.log","r")
+tarSum = open("tarsum.log.v1","r")
 lines = tarSum.readlines()
 for line in lines:
     tmp = line.strip().strip('(').strip(')').split(',')
     tarsumDict[tmp[0]] = tmp[1]
 
-tarSum = open("tarsum.log.v1","r")
+tarSum = open("tarsum.log","r")
 lines = tarSum.readlines()
 for line in lines:
     tmp = line.strip().strip('(').strip(')').split(',')
     tarSumDict[tmp[0]] = tmp[1]
 
-buildlog = open("buildcache.log", "r")
+buildlog = open("buildcache.log.v1", "r")
 lines = buildlog.readlines()
 i = 0
 commit = ""
@@ -36,7 +36,7 @@ while i < len(lines):
     i += 1
 commitDict[commit] = tarSumList
 
-buildlog = open("buildcache.log.v1", "r")
+buildlog = open("buildcache.log", "r")
 lines = buildlog.readlines()
 commit = ""
 i = 0

@@ -1,29 +1,30 @@
 package depbuilder // import "github.com/docker/docker/builder/depbuilder"
 
 import (
-	"os"
-	"strings"
 	"bufio"
-	"regexp"
-	_ "strconv"
-	"time"
+	"context"
 	"encoding/json"
 	"io/ioutil"
 	"net"
-	"context"
+	"os"
+	"regexp"
+	_ "strconv"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 type Tracee struct {
-	traceLog 			*os.File
-	lastTime			int64
-	layerDigest			string
-	lastCacheID			string
-	LayerCount			int
-	LayerDict			map[int]string
-	fileUpdateRecord	map[string]int
-	traceRecord			[]map[string]interface{}
+	traceLog         *os.File
+	lastTime         int64
+	layerDigest      string
+	lastCacheID      string
+	LayerCount       int
+	LayerNum         int
+	LayerDict        map[int]string
+	fileUpdateRecord map[string]int
+	traceRecord      []map[string]interface{}
 }
 
 const dockerStorgePath = "/var/lib/docker/aufs/diff/"
@@ -41,8 +42,6 @@ const normalLayerReg = `(?m)^/var/lib/docker/aufs/dir/`
 const writeFlag = (os.O_WRONLY | os.O_CREATE)
 
 const readWriteFlag = (os.O_RDWR | os.O_APPEND)
-
-
 
 // func getTime(timeString string) int {
 // 	timeList := strings.Split(timeString, ":")
@@ -135,19 +134,24 @@ func walkDir(path string, files []string) ([]string, error) {
 
 	for _, fi := range dir {
 		if fi.IsDir() {
-			files = append(files, path + sep + fi.Name())
-			files, err = walkDir(path + sep + fi.Name(), files)
+			files = append(files, path+sep+fi.Name())
+			files, err = walkDir(path+sep+fi.Name(), files)
 		} else {
-			files = append(files, path + sep + fi.Name())
+			files = append(files, path+sep+fi.Name())
 		}
 	}
 
 	return files, nil
 }
 
+func (t *Tracee) HasLayer() error {
+	_, err := ioutil.ReadDir(dockerStorgePath + t.lastCacheID)
+	return err
+}
+
 func (t *Tracee) CallTracee(com string) {
 	socket, err := net.DialUDP("udp", nil, &net.UDPAddr{
-		IP: net.IPv4(172, 17, 0, 1),
+		IP:   net.IPv4(172, 17, 0, 1),
 		Port: 11451,
 	})
 	if err != nil {
@@ -162,7 +166,7 @@ func (t *Tracee) CallTracee(com string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(time.Second * 10))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(time.Second*20))
 	defer cancel()
 	ch := make(chan struct{}, 0)
 	go func() {
@@ -178,12 +182,12 @@ func (t *Tracee) CallTracee(com string) {
 	}()
 
 	select {
-		case <- ch:
-			logrus.Debug("Done")
-		case <-ctx.Done():
-			logrus.Debug("Timeout")
+	case <-ch:
+		logrus.Debug("Done")
+	case <-ctx.Done():
+		logrus.Debug("Timeout")
 	}
-	
+
 }
 
 func (t *Tracee) GetStageId() string {
@@ -193,7 +197,7 @@ func (t *Tracee) GetStageId() string {
 		if strings.Contains(mkdirPath, "-init") && strings.HasPrefix(mkdirPath, dockerStorgePath) {
 			var re = regexp.MustCompile(`(?m)/[a-zA-Z0-9]*-init/`)
 			for _, match := range re.FindAllString(mkdirPath, -1) {
-				t.layerDigest = strings.TrimSuffix(strings.Trim(match,"//"), "-init")
+				t.layerDigest = strings.TrimSuffix(strings.Trim(match, "//"), "-init")
 				// logrus.Debugf("stage id is : %s", t.layerDigest)
 				return t.layerDigest
 			}
@@ -211,7 +215,7 @@ func (t *Tracee) GetDepLayer() ([]int, []string, error) {
 	// 	for _, match := range normalLayerPrefix.FindAllString(callPath, -1) {
 	// 		filePath = strings.Trim(callPath, match)
 	// 	}
-		
+
 	// }
 }
 
@@ -225,7 +229,7 @@ func getPath(argsList []interface{}) string {
 	for _, arg := range argsList {
 		argMap := arg.(map[string]interface{})
 		if argMap["name"].(string) == "pathname" {
-			if strings.HasPrefix(argMap["value"].(string), `/`){
+			if strings.HasPrefix(argMap["value"].(string), `/`) {
 				return argMap["value"].(string)
 			}
 			return `/` + argMap["value"].(string)
@@ -249,7 +253,7 @@ func (t *Tracee) checkUpdate(filePath string) bool {
 	if err != nil {
 		// logrus.Debugf("can not find file: %s %s", openPath, strings.Replace(openPath, t.layerDigest, t.lastCacheID, -1))
 		return false
-	} else if !fileStat.ModTime().Before(time.Unix(0, t.lastTime-t.lastTime%1000000000)){
+	} else if !fileStat.ModTime().Before(time.Unix(0, t.lastTime-t.lastTime%1000000000)) {
 		// logrus.Debugf("file be updated: %s %s", filePath, fileStat.ModTime())
 		return true
 	} else {
@@ -312,7 +316,7 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 			return nil, nil, err
 		}
 
-		if int64(trace["timestamp"].(float64)) <= t.lastTime{
+		if int64(trace["timestamp"].(float64)) <= t.lastTime {
 			continue
 		}
 
@@ -356,8 +360,8 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 	// 		// 			logrus.Debugf("find mkdir %s", pathSuffix)
 	// 		// 			delete(fileMap, pathSuffix)
 	// 		// 		}
-	// 		// 	}		
-	// 		// }	
+	// 		// 	}
+	// 		// }
 	// 		continue
 	// 	} else if trace["processName"] == "mkdir" || trace["processName"] == "mkdirat" {
 	// 		logrus.Debugf("find mkdir souce %s", mkdirPath)
@@ -369,6 +373,8 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 	depLayers := make(map[int]bool)
 	fileMap := make(map[string]bool)
 
+	// openf, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/openPath.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	// fmt.Fprintf(openf, "%d\n", t.LayerCount)
 	for _, trace := range openList {
 		argsList := trace["args"].([]interface{})
 		openPath := getPath(argsList)
@@ -386,7 +392,7 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 			// 		}
 			// 	}
 			// }
-			
+
 			// regMatch := normalLayerPrefix.FindAllString(openPath, -1)
 			// for _, match := range regMatch {
 			// 	filePath := `/` + strings.TrimPrefix(openPath, match)
@@ -394,21 +400,32 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 			// 	if isOk && val != t.LayerCount {
 			// 		if checkFilepath(filePath, fileMap) == true {
 			// 			depLayers[val] = true
-			// 			logrus.Debugf("file dep: %s", filePath)	
+			// 			logrus.Debugf("file dep: %s", filePath)
 			// 		}
 			// 	}
 			// }
 			continue
 		} else {
-			if processName := trace["processName"].(string); !( strings.Contains(processName, "runc") || strings.Contains(processName, "docker") || strings.Contains(processName, "containerd") ) {
+			// if processName := trace["processName"].(string); !(strings.Contains(processName, "runc") || strings.Contains(processName, "docker") || strings.Contains(processName, "containerd")) {
+			// 	fileMap[openPath] = true
+			// 	// logrus.Debugf("find open call: %s", openPath)
+			// }
+
+			index := strings.LastIndex(openPath, "/")
+			part := openPath[index+1:]
+			if strings.HasPrefix(part, ".wh.") {
+				openPath = openPath[:index+1] + strings.TrimPrefix(part, ".wh.")
+			}
+			// fileMap[openPath] = true
+			if processName := trace["processName"].(string); !(strings.Contains(processName, "runc") || processName == "docker" || strings.Contains(processName, "containerd")) {
 				fileMap[openPath] = true
-				// logrus.Debugf("find open call: %s", openPath)
-			} 
+				// fmt.Fprintf(openf, "%s\n", openPath)
+			}
 			val, isOk := t.fileUpdateRecord[openPath]
 			if isOk {
 				if checkFilepath(openPath, fileMap) == true {
 					depLayers[val] = true
-					// logrus.Debugf("file dep: %s", openPath)	
+					// logrus.Debugf("file dep: %s", openPath)
 					// logrus.Debugf("file dep layer: %d", val)
 					if dirDep := t.checkDir(openPath); dirDep != -1 {
 						depLayers[dirDep] = true
@@ -430,29 +447,44 @@ func (t *Tracee) MatchTrace() ([]int, []string, error) {
 		}
 	}
 
+	// fmt.Fprintf(openf, "\n")
+	// openf.Close()
+
 	var updateFiles []string
 	var err error
 
-	updateFiles, err = walkDir(dockerStorgePath + t.lastCacheID, updateFiles)
+	updateFiles, err = walkDir(dockerStorgePath+t.lastCacheID, updateFiles)
 
-	logrus.Debugf("walk path : %s", dockerStorgePath + t.lastCacheID)
+	logrus.Debugf("walk path : %s", dockerStorgePath+t.lastCacheID)
 
 	if err == nil {
 		for _, fi := range updateFiles {
-			t.fileUpdateRecord[strings.TrimPrefix(fi, dockerStorgePath + t.lastCacheID)] = t.LayerCount
+			t.fileUpdateRecord[strings.TrimPrefix(fi, dockerStorgePath+t.lastCacheID)] = t.LayerNum
 		}
 	} else {
 		return nil, nil, err
 	}
+
+	// WriteFile("/go/src/github.com/docker/docker/trans/fileUpdate.log", t)
 
 	logrus.Debugf("last time %s %d", time.Unix(0, t.lastTime).Format("2006-01-02 15:04:05"), t.lastTime)
 
 	keys := []int{}
 	dL := []string{}
 	for k := range depLayers {
-		keys = append(keys,k)
-		dL = append(dL,t.LayerDict[k])
+		keys = append(keys, k)
+		dL = append(dL, t.LayerDict[k])
 		// logrus.Debugf("update deplayers:%d %s", k, t.LayerDict[k])
 	}
 	return keys, dL, nil
 }
+
+// func WriteFile(filename string, t *Tracee) {
+// 	f, _ := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+// 	fmt.Fprintf(f, "%d\n", t.LayerCount)
+// 	for k, v := range t.fileUpdateRecord {
+// 		fmt.Fprintf(f, "%s:%d\n", k, v)
+// 	}
+// 	fmt.Fprintf(f, "\n")
+// 	f.Close()
+// }

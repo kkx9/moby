@@ -75,7 +75,7 @@ func (daemon *Daemon) containerCreate(ctx context.Context, opts createOpts) (con
 		img, err := daemon.imageService.GetImage(ctx, opts.params.Config.Image, imagetypes.GetImageOpts{Platform: opts.params.Platform})
 		// logrus.Debug("Get image")
 		if err != nil {
-			// logrus.Debug(err)
+			logrus.Debug(err)
 			return containertypes.CreateResponse{}, err
 		}
 		if img != nil {
@@ -159,7 +159,12 @@ func (daemon *Daemon) create(ctx context.Context, opts createOpts) (retC *contai
 	}
 
 	// logrus.Debug("start creating container")
-
+	// logrus.Debug(opts.params.Name)
+	// logrus.Debug(os)
+	// logrus.Debug(opts.params.Config)
+	// logrus.Debug(opts.params.HostConfig)
+	// logrus.Debug(imgID)
+	// logrus.Debug(opts.managed)
 	if ctr, err = daemon.newContainer(opts.params.Name, os, opts.params.Config, opts.params.HostConfig, imgID, opts.managed); err != nil {
 		return nil, err
 	}
@@ -193,7 +198,8 @@ func (daemon *Daemon) create(ctx context.Context, opts createOpts) (retC *contai
 		return nil, errdefs.System(err)
 	}
 	ctr.RWLayer = rwLayer
-
+	// logrus.Debug("rwLayer is")
+	// logrus.Debug(rwLayer)
 	current := idtools.CurrentIdentity()
 	if err := idtools.MkdirAndChown(ctr.Root, 0710, idtools.Identity{UID: current.UID, GID: daemon.IdentityMapping().RootPair().GID}); err != nil {
 		return nil, err

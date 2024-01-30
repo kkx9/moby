@@ -1,28 +1,27 @@
 package layer // import "github.com/docker/docker/layer"
 
 import (
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sync"
 	"strings"
-	"compress/gzip"
-	"io/ioutil"
+	"sync"
 
 	"github.com/docker/distribution"
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/plugingetter"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/pkg/tarsum"
 	"github.com/moby/locker"
 	"github.com/opencontainers/go-digest"
 	"github.com/sirupsen/logrus"
 	"github.com/vbatts/tar-split/tar/asm"
 	"github.com/vbatts/tar-split/tar/storage"
-	"github.com/docker/docker/pkg/tarsum"
-
 )
 
 // maxLayerDepth represents the maximum number of
@@ -46,7 +45,7 @@ type layerStore struct {
 	// protect *RWLayer() methods from operating on the same name/id
 	locker *locker.Locker
 
-	lastCacheID	string
+	lastCacheID string
 }
 
 // StoreOptions are the options used to create a new Store instance
@@ -313,7 +312,7 @@ func registeLayerHash(chain ChainID, cacheID string) {
 	logrus.Debugf("calc tarsum:%s", tarSum)
 
 	tarFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/tarsum.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
-	fmt.Fprintf(tarFile,"(%s,%s)\n", cacheID, tarSum)
+	fmt.Fprintf(tarFile, "(%s,%s)\n", cacheID, tarSum)
 	tarFile.Close()
 
 }

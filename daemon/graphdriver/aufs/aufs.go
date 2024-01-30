@@ -253,6 +253,7 @@ func (a *Driver) Create(id, parent string, opts *graphdriver.CreateOpts) error {
 	defer f.Close()
 
 	if parent != "" {
+		// logrus.Debug("layer's parent: ", parent)
 		ids, err := getParentIDs(a.rootPath(), parent)
 		if err != nil {
 			return err
@@ -593,10 +594,11 @@ func (a *Driver) aufsMount(ro []string, rw, target, mountLabel string) (err erro
 	a.mntL.Lock()
 	err = unix.Mount("none", target, "aufs", 0, data)
 	a.mntL.Unlock()
-	// logrus.Debugf("aufs mount args: %s | %s ",  target, data)
+	// logrus.Debugf("aufs mount args: %s | %s ", target, data)
 	// logrus.Debug(os.Stat(target))
 	if err != nil {
 		err = errors.Wrap(err, "mount target="+target+" data="+data)
+		// logrus.Debug(err)
 		return
 	}
 

@@ -11,6 +11,7 @@ import (
 // ImageProber exposes an Image cache to the Builder. It supports resetting a
 // cache.
 type ImageProber interface {
+	Set()
 	Reset(ctx context.Context) error
 	Probe(parentID string, runConfig *container.Config) (string, error)
 }
@@ -68,7 +69,14 @@ func (c *imageProber) Probe(parentID string, runConfig *container.Config) (strin
 	return cacheID, nil
 }
 
+func (c *imageProber) Set() {
+	c.cacheBusted = true
+}
+
 type nopProber struct{}
+
+func (c *nopProber) Set() {
+}
 
 func (c *nopProber) Reset(ctx context.Context) error {
 	return nil

@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
-	"os"
+	"time"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api/types"
@@ -250,6 +251,7 @@ func printCommand(out io.Writer, currentCommandIndex int, totalCommands int, cmd
 }
 
 func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseResult []instructions.Stage, metaArgs []instructions.ArgCommand, escapeToken rune, source builder.Source) (*dispatchState, error) {
+	tstartTime := time.Now()
 	dispatchRequest := dispatchRequest{}
 	buildArgs := NewBuildArgs(b.options.BuildArgs)
 	totalCommands := len(metaArgs) + len(parseResult)
@@ -268,8 +270,10 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 	}
 
 	stagesResults := newStagesBuildResults()
-	cacheFile ,_ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	cacheFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+	timeFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildtime.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
 	for _, s := range parseResult {
+		startTime0 := time.Now()
 		stage := s
 		if err := stagesResults.checkStageNameAvailable(stage.Name); err != nil {
 			return nil, err
@@ -283,8 +287,11 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 		dispatchRequest.state.updateRunConfig()
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		logrus.Debug("stage id:", dispatchRequest.state.imageID)
-		fmt.Fprintf(cacheFile,"(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
+		fmt.Fprintf(cacheFile, "(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
+		elapsed0 := time.Since(startTime0)
+		fmt.Fprintf(timeFile, "%s\n", elapsed0)
 		for _, cmd := range stage.Commands {
+			startTime := time.Now()
 			select {
 			case <-ctx.Done():
 				logrus.Debug("Builder: build cancelled!")
@@ -302,9 +309,11 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 			}
 			dispatchRequest.state.updateRunConfig()
 			logrus.Debug("stage id:", dispatchRequest.state.imageID)
-			fmt.Fprintf(cacheFile,"(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
-			
+			fmt.Fprintf(cacheFile, "(%s,%s)\n", dispatchRequest.state.imageID, b.docker.GetLastCacheID())
+
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
+			elapsed := time.Since(startTime)
+			fmt.Fprintf(timeFile, "%s\n", elapsed)
 		}
 		if err := emitImageID(b.Aux, dispatchRequest.state); err != nil {
 			return nil, err
@@ -314,7 +323,10 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 			return nil, err
 		}
 	}
+	telapsed := time.Since(tstartTime)
+	fmt.Fprintf(timeFile, "%s\n", telapsed)
 	cacheFile.Close()
+	timeFile.Close()
 	buildArgs.WarnOnUnusedBuildArgs(b.Stdout)
 	return dispatchRequest.state, nil
 }

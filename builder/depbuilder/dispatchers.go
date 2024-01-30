@@ -361,11 +361,13 @@ func dispatchRun(ctx context.Context, d dispatchRequest, c *instructions.RunComm
 		withoutHealthcheck())
 
 	cID, err := d.builder.create(ctx, runConfig)
+	// logrus.Debug(runConfig)
 	if err != nil {
 		return err
 	}
 
 	if err := d.builder.containerManager.Run(ctx, cID, d.builder.Stdout, d.builder.Stderr); err != nil {
+		logrus.Debug("we have a mistake")
 		if err, ok := err.(*statusCodeError); ok {
 			// TODO: change error type, because jsonmessage.JSONError assumes HTTP
 			msg := fmt.Sprintf(

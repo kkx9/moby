@@ -1,0 +1,9 @@
+{
+    "go.gopath": "/home/yuehang/go",
+    "go.toolsGopath": "/home/yuehang/go",
+    "go.toolsEnvVars": {
+        "GO111MODULE": "auto"
+    },
+    "editor.links": false,
+}
+

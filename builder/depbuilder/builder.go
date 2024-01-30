@@ -1,18 +1,19 @@
 package depbuilder // import "github.com/docker/docker/builder/depbuilder"
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
-	"sort"
-	"strings"
-	"bufio"
-	"os"
-	"strconv"
-	"runtime/pprof"
-	"crypto/rand"
 	"math/big"
+	"os"
+	"runtime/pprof"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api/types"
@@ -21,6 +22,8 @@ import (
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/remotecontext"
 	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/image"
+	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/stringid"
@@ -28,8 +31,6 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/docker/docker/image"
-	"github.com/docker/docker/layer"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/syncmap"
@@ -131,17 +132,17 @@ type DepBuilder struct {
 	imageProber      ImageProber
 	platform         *specs.Platform
 
-	firstBuild		bool
-	depInfo 		*builder.DepInfo
-	traceManager	*Tracee
+	firstBuild   bool
+	depInfo      *builder.DepInfo
+	traceManager *Tracee
 
-	depLayers		[][]int
-	layersDigest	map[int]string
+	depLayers       [][]int
+	layersDigest    map[int]string
 	baseImageDigest string
-	newDepLayer		[]int
-	newDepDigest	[]string
-	layerList		[]layer.DiffID
-	cacheIDList		[]string
+	newDepLayer     []int
+	newDepDigest    []string
+	layerList       []layer.DiffID
+	cacheIDList     []string
 }
 
 func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error) {
@@ -156,10 +157,10 @@ func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error
 	}
 
 	tm := &Tracee{
-		traceLog:		 	nil,
-		lastTime:		 	0,
-		LayerDict:			make(map[int]string),
-		fileUpdateRecord:	make(map[string]int),
+		traceLog:         nil,
+		lastTime:         0,
+		LayerDict:        make(map[int]string),
+		fileUpdateRecord: make(map[string]int),
 	}
 
 	b := &DepBuilder{
@@ -174,16 +175,16 @@ func newBuilder(ctx context.Context, options builderOptions) (*DepBuilder, error
 		pathCache:        options.PathCache,
 		imageProber:      imageProber,
 		containerManager: newContainerManager(options.Backend),
-		firstBuild:		  false,
-		depInfo:		  nil,
-		traceManager:	  tm,
-		depLayers:		  [][]int{},
-		layersDigest:	  make(map[int]string),
+		firstBuild:       false,
+		depInfo:          nil,
+		traceManager:     tm,
+		depLayers:        [][]int{},
+		layersDigest:     make(map[int]string),
 		baseImageDigest:  "",
-		newDepLayer:	  []int{},
-		newDepDigest:	  []string{},
-		layerList:		  []layer.DiffID{},
-		cacheIDList:	  []string{},
+		newDepLayer:      []int{},
+		newDepDigest:     []string{},
+		layerList:        []layer.DiffID{},
+		cacheIDList:      []string{},
 	}
 
 	// check dependency file
@@ -290,7 +291,7 @@ func printCommand(out io.Writer, currentCommandIndex int, totalCommands int, cmd
 
 func transIntSlice(arr []string) []int {
 	out := []int{}
-	for _, v := range(arr) {
+	for _, v := range arr {
 		iv, err := strconv.Atoi(v)
 		if err == nil {
 			out = append(out, iv)
@@ -300,6 +301,7 @@ func transIntSlice(arr []string) []int {
 }
 
 func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, parseResult []instructions.Stage, metaArgs []instructions.ArgCommand, escapeToken rune, source builder.Source) (*dispatchState, error) {
+	tstartTime := time.Now()
 	dispatchRequest := dispatchRequest{}
 	buildArgs := NewBuildArgs(b.options.BuildArgs)
 	totalCommands := len(metaArgs) + len(parseResult)
@@ -317,12 +319,13 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		}
 	}
 
+	baseImageIndex := currentCommandIndex
+
 	stagesResults := newStagesBuildResults()
 	// stageInd := map[string]int{}
 	// logrus.Debug(totalCommands)
 
 	// start tracee
-
 
 	//get build history
 	if b.firstBuild == false {
@@ -330,38 +333,48 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		dockerfileArchReader := bufio.NewScanner(b.depInfo.DockerfileArch)
 		matchRow := 0
 		for _, s := range parseResult {
-			if !depFileReader.Scan() || !dockerfileArchReader.Scan() {
-				break
-			}
-			matchRow++
-			sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
-			depLine := strings.TrimSpace(depFileReader.Text())
-			depSlice := transIntSlice(strings.Split(depLine, " "))
-			if sourceCode == s.SourceCode {
-				b.depLayers = append(b.depLayers, depSlice[1:])
-			} else{
-				b.depLayers = append(b.depLayers, []int{-1})
-				logrus.Warning(sourceCode, s.SourceCode)
-			}
-			for _, cmd := range s.Commands {
-				if !depFileReader.Scan() || !dockerfileArchReader.Scan() {
-					break
-				}
+			if depFileReader.Scan() && dockerfileArchReader.Scan() {
 				matchRow++
 				sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
 				depLine := strings.TrimSpace(depFileReader.Text())
-				// logrus.Debug(depLine)
 				depSlice := transIntSlice(strings.Split(depLine, " "))
-				// logrus.Debug(depSlice)
-				if sourceCode == fmt.Sprintf("%s", cmd){
-					b.depLayers = append(b.depLayers, depSlice)
+				if sourceCode == s.SourceCode {
+					b.depLayers = append(b.depLayers, depSlice[1:])
 				} else {
 					b.depLayers = append(b.depLayers, []int{-1})
-					logrus.Warning(sourceCode, cmd)
+					logrus.Warning(sourceCode, s.SourceCode)
+					b.firstBuild = true
+				}
+			} else {
+				b.depLayers = append(b.depLayers, []int{-1})
+			}
+			for _, cmd := range s.Commands {
+				if depFileReader.Scan() && dockerfileArchReader.Scan() {
+					matchRow++
+					sourceCode := strings.TrimSpace(dockerfileArchReader.Text())
+					depLine := strings.TrimSpace(depFileReader.Text())
+					depSlice := transIntSlice(strings.Split(depLine, " "))
+					if sourceCode == fmt.Sprintf("%s", cmd) {
+						b.depLayers = append(b.depLayers, depSlice)
+					} else {
+						b.depLayers = append(b.depLayers, []int{})
+						logrus.Warning(sourceCode, cmd)
+						b.firstBuild = true
+					}
+				} else {
+					b.depLayers = append(b.depLayers, []int{})
 				}
 			}
 		}
 		// logrus.Debug(b.depLayers)
+	} else {
+		for _, s := range parseResult {
+			b.depLayers = append(b.depLayers, []int{-1})
+			for _, cmd := range s.Commands {
+				logrus.Debug(cmd)
+				b.depLayers = append(b.depLayers, []int{})
+			}
+		}
 	}
 
 	bd, err := b.docker.ApplyBuildHistory(b.options.Dockerfile)
@@ -383,25 +396,39 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 	pf, _ := os.Create(`/var/lib/docker/` + rid.String() + ".pprof")
 	pprof.StartCPUProfile(pf)
 
+	timeFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildtime.log.v1", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
 	for _, s := range parseResult {
+		if b.firstBuild == true {
+			b.traceManager.fileUpdateRecord = make(map[string]int)
+		}
+		startTime0 := time.Now()
 		stage := s
 		if err := stagesResults.checkStageNameAvailable(stage.Name); err != nil {
 			return nil, err
 		}
 		dispatchRequest = newDispatchRequest(b, escapeToken, source, buildArgs, stagesResults)
 
-		// logrus.Debug(stage.BaseName)
-		// logrus.Debug(fmt.Sprintf("%s\n", stage.SourceCode))
-		dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", stage.SourceCode))
-		depFileWriter.WriteString(fmt.Sprintf("-1\n"))
+		if b.firstBuild == true {
+			// logrus.Debug(stage.BaseName)
+			// logrus.Debug(fmt.Sprintf("%s\n", stage.SourceCode))
+			dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", stage.SourceCode))
+			depFileWriter.WriteString(fmt.Sprintf("-1\n"))
+		}
 
 		currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, stage.SourceCode)
-		b.traceManager.CallTracee("Open")
-		if err := initializeStage(ctx, dispatchRequest, &stage); err != nil {
-			return nil, err
+
+		if b.firstBuild == true {
+			b.traceManager.CallTracee("Open")
+			if err := initializeStage(ctx, dispatchRequest, &stage); err != nil {
+				return nil, err
+			}
+			b.traceManager.CallTracee("Close")
+		} else {
+			if err := initializeStage(ctx, dispatchRequest, &stage); err != nil {
+				return nil, err
+			}
 		}
-		b.traceManager.CallTracee("Close")
-		
+
 		dispatchRequest.state.updateRunConfig()
 		b.layersDigest[currentCommandIndex-1] = dispatchRequest.state.imageID
 		b.baseImageDigest = dispatchRequest.state.imageID
@@ -409,7 +436,10 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		b.traceManager.LayerDict[currentCommandIndex-1] = dispatchRequest.state.imageID
 		logrus.Debugf("the %d layer digest: %s", currentCommandIndex-1, dispatchRequest.state.imageID)
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
+		elapsed0 := time.Since(startTime0)
+		fmt.Fprintf(timeFile, "%s\n", elapsed0)
 		for _, cmd := range stage.Commands {
+			startTime := time.Now()
 			select {
 			case <-ctx.Done():
 				logrus.Debug("Builder: build cancelled!")
@@ -422,41 +452,57 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 			// Start tracee to record
 			// logrus.Debug(fmt.Sprintf("%s\n", cmd))
-			
-			dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", cmd))
+
+			if b.firstBuild == true {
+				dockerfileArchWriter.WriteString(fmt.Sprintf("%s\n", cmd))
+			}
+
 			// logrus.Debug("Start tracee")
 			currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, cmd)
-			
-			// get layer id && check depdency trace
-			b.traceManager.LayerCount = currentCommandIndex - 1
-			b.traceManager.CallTracee("Open")
-			b.traceManager.UpdateTime()
-			if err := dispatch(ctx, dispatchRequest, cmd); err != nil {
-				return nil, err
+
+			b.traceManager.LayerCount = currentCommandIndex - baseImageIndex
+			b.traceManager.LayerNum = currentCommandIndex - 1
+			if b.firstBuild == true {
+				// get layer id && check depdency trace
+				b.traceManager.CallTracee("Open")
+				b.traceManager.UpdateTime()
+				if err := dispatch(ctx, dispatchRequest, cmd); err != nil {
+					return nil, err
+				}
+				b.traceManager.CallTracee("Close")
+			} else {
+				// b.traceManager.UpdateTime()
+				if err := dispatch(ctx, dispatchRequest, cmd); err != nil {
+					return nil, err
+				}
 			}
-			b.traceManager.CallTracee("Close")
 
 			b.updateLayerList(dispatchRequest.state.imageID)
 
 			b.layersDigest[currentCommandIndex-1] = dispatchRequest.state.imageID
-			b.traceManager.LayerDict[currentCommandIndex-1] = dispatchRequest.state.imageID
-			
-			logrus.Debugf("the %d layer digest: %s", currentCommandIndex-1, dispatchRequest.state.imageID)
-			
-			for _,k := range b.newDepLayer{
-				// logrus.Debugf("depStage is: %d", k)
-				depFileWriter.WriteString(fmt.Sprintf("%d ", k))
-			}
-			depFileWriter.WriteString("\n")
 
-			b.newDepLayer = b.newDepLayer[:0]
-			b.newDepDigest = b.newDepDigest[:0]
+			b.traceManager.LayerDict[currentCommandIndex-1] = dispatchRequest.state.imageID
+
+			logrus.Debugf("the %d layer digest: %s", currentCommandIndex-1, dispatchRequest.state.imageID)
+
+			if b.firstBuild == true {
+				for _, k := range b.newDepLayer {
+					// logrus.Debugf("depStage is: %d", k)
+					depFileWriter.WriteString(fmt.Sprintf("%d ", k))
+				}
+				depFileWriter.WriteString("\n")
+
+				b.newDepLayer = b.newDepLayer[:0]
+				b.newDepDigest = b.newDepDigest[:0]
+			}
 
 			dispatchRequest.state.updateRunConfig()
 
 			// logrus.Debug("check cacheID list: ", b.cacheIDList)
 
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
+			elapsed := time.Since(startTime)
+			fmt.Fprintf(timeFile, "%s\n", elapsed)
 		}
 		// End tracee and record
 		// logrus.Debug("End tracee")
@@ -464,9 +510,9 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		dockerfileArchWriter.Flush()
 		depFileWriter.Flush()
 
-		cacheFile ,_ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
-		for _,v := range b.cacheIDList {
-			fmt.Fprintf(cacheFile,"%s\n", v)
+		cacheFile, _ := os.OpenFile("/go/src/github.com/docker/docker/trans/buildcache.log.v1", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+		for _, v := range b.cacheIDList {
+			fmt.Fprintf(cacheFile, "%s\n", v)
 		}
 		cacheFile.Close()
 
@@ -481,6 +527,9 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 		}
 	}
 
+	telapsed := time.Since(tstartTime)
+	fmt.Fprintf(timeFile, "%s\n", telapsed)
+
 	pprof.StopCPUProfile()
 	pf.Close()
 
@@ -494,37 +543,56 @@ func (b *DepBuilder) dispatchDockerfileWithCancellation(ctx context.Context, par
 
 func (b *DepBuilder) checkBuildDepdency() bool {
 	// hard coding
-	lf, _ := os.Open("/tracee/tracee.log")
-	b.traceManager.traceLog = lf
+	if b.firstBuild == true {
+		lf, _ := os.Open("/tracee/tracee.log")
+		b.traceManager.traceLog = lf
+	}
 
 	stageID := b.docker.GetLastCacheID()
-	if len(b.cacheIDList) == 0{
+	if len(b.cacheIDList) == 0 {
 		content, err := os.ReadFile(`/var/lib/docker/aufs/layers/` + strings.TrimPrefix(stageID, "sha256:"))
 		if err != nil {
 			logrus.Debugf("fail get layers error: ", err)
 		} else {
 			ll := strings.Split(string(content), "\n")
 
-			for i:=0; i < len(ll) - 1; i++ {
+			for i := 0; i < len(ll)-1; i++ {
 				b.cacheIDList = append(b.cacheIDList, ll[i])
 			}
 		}
 	}
 	b.traceManager.lastCacheID = stageID
 
+	// logrus.Debugf("cacheIDList:%s", b.cacheIDList)
 	var err error
 	flag := true
-	b.newDepLayer, b.newDepDigest, err = b.traceManager.GetDepLayer()
+	if b.firstBuild == true {
+		b.newDepLayer, b.newDepDigest, err = b.traceManager.GetDepLayer()
+	} else {
+		err = b.traceManager.HasLayer()
+		b.newDepDigest = b.newDepDigest[:0]
+		// logrus.Debug(b.traceManager.LayerCount - 1)
+		// logrus.Debug(b.depLayers[b.traceManager.LayerCount-1])
+		for _, k := range b.depLayers[b.traceManager.LayerCount-1] {
+			// logrus.Debugf("dep layer num:%d", k)
+			// logrus.Debugf("dep layer id:%s", b.traceManager.LayerDict[k])
+			b.newDepDigest = append(b.newDepDigest, b.traceManager.LayerDict[k])
+		}
+	}
 
 	if err == nil {
+		// logrus.Debugf("append cache id %s", stageID)
 		b.cacheIDList = append(b.cacheIDList, stageID)
 	} else {
 		flag = false
 	}
 
-	b.traceManager.traceLog.Close()
+	if b.firstBuild == true {
+		b.traceManager.traceLog.Close()
+	}
 
 	logrus.Debugf("get cache id %s", stageID)
+	// logrus.Debug(flag)
 	return flag
 }
 
@@ -555,10 +623,10 @@ func (b *DepBuilder) updateLayerList(layerDigest string) {
 		logrus.Error(err)
 		return
 	}
-	if len(b.layerList) > len(im.RootFS.DiffIDs){
+	if len(b.layerList) > len(im.RootFS.DiffIDs) {
 		logrus.Error("layerlist more than diffid")
 	}
-	for i:= len(b.layerList); i < len(im.RootFS.DiffIDs); i++ {
+	for i := len(b.layerList); i < len(im.RootFS.DiffIDs); i++ {
 		b.layerList = append(b.layerList, im.RootFS.DiffIDs[i])
 	}
 }

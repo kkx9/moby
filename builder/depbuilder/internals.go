@@ -70,6 +70,7 @@ func (b *DepBuilder) commitContainer(dispatchState *dispatchState, id string, co
 	}
 
 	b.docker.AddLayer(string(imageID), b.newDepDigest, containerConfig, b.traceManager.lastCacheID, flag)
+
 	// logrus.Debug("Add cache")
 	// logrus.Debug(string(imageID))
 	// logrus.Debug(b.newDepDigest)
@@ -129,6 +130,7 @@ func (b *DepBuilder) exportImage(state *dispatchState, layer builder.RWLayer, pa
 	flag := b.checkBuildDepdency()
 	// logrus.Debug("export image")
 	b.docker.AddLayer(string(state.imageID), []string{b.baseImageDigest}, runConfig, b.traceManager.lastCacheID, flag)
+
 	b.imageSources.Add(newImageMount(exportedImage, newLayer), platform)
 	return nil
 }
@@ -142,6 +144,7 @@ func (b *DepBuilder) performCopy(ctx context.Context, req dispatchRequest, inst 
 		chownComment = fmt.Sprintf("--chown=%s", inst.chownStr)
 	}
 	commentStr := fmt.Sprintf("%s %s%s in %s ", inst.cmdName, chownComment, srcHash, inst.dest)
+	// logrus.Debug(commentStr)
 	// logrus.Debug("perform Copy")
 	// TODO: should this have been using origPaths instead of srcHash in the comment?
 	runConfigWithCommentCmd := copyRunConfig(
@@ -345,29 +348,63 @@ func getShell(c *container.Config, os string) []string {
 }
 
 func (b *DepBuilder) probeCache(dispatchState *dispatchState, runConfig *container.Config) (bool, error) {
-	if len(b.depLayers) > b.traceManager.LayerCount-1 {
+	// for i := 0; i < len(runConfig.Cmd); i++ {
+	// 	logrus.Debug(runConfig.Cmd[i])
+	// }
+	//  || !strings.HasPrefix(runConfig.Cmd[2], "#(nop) ")
+	// !(strings.Contains(runConfig.Cmd[2], "WORKDIR") || runConfig.Cmd[2] == "#(nop) ") && len(b.depLayers) > b.traceManager.LayerCount-1
+	// if strings.Contains(runConfig.Cmd[2], "pip install numpy") {
+	// 	logrus.Info(dispatchState)
+	// 	return false, nil
+	// }
+	if !(strings.Contains(runConfig.Cmd[2], "WORKDIR") || runConfig.Cmd[2] == "#(nop) ") && len(b.depLayers) > b.traceManager.LayerCount-1 {
 		logrus.Debug("check dep cache")
-		depdencyLayer := [] string {}
-		for _,layerID := range b.depLayers[b.traceManager.LayerCount-1] {
+		depdencyLayer := []string{}
+		for _, layerID := range b.depLayers[b.traceManager.LayerCount-1] {
 			depdencyLayer = append(depdencyLayer, b.layersDigest[layerID])
 			// logrus.Debugf("%d layer: %s", layerID, b.layersDigest[layerID])
 		}
-		logrus.Debug(len(depdencyLayer))
-		logrus.Debug(b.baseImageDigest)
+		// logrus.Debug(len(depdencyLayer))
+		// logrus.Debug(b.baseImageDigest)
 		if len(depdencyLayer) == 0 {
 			depdencyLayer = append(depdencyLayer, b.baseImageDigest)
 		}
+		// if strings.Contains(runConfig.Cmd[2], "WORKDIR") || runConfig.Cmd[2] == "#(nop) " {
+		// 	depdencyLayer = append(depdencyLayer, b.layersDigest[b.traceManager.LayerNum-1])
+		// } else if len(depdencyLayer) == 0 {
+		// 	depdencyLayer = append(depdencyLayer, b.baseImageDigest)
+		// }
 		depCachedID := b.docker.CheckLayer(runConfig, depdencyLayer, &b.layerList, &b.cacheIDList)
 		if len(depCachedID) != 0 {
 			logrus.Debugf("[Dep Cache] Hit : %s", runConfig.Cmd)
 			logrus.Debugf("cache id is : %s", depCachedID)
-			fmt.Fprint (b.Stdout, " ---> Using cache\n")
+			fmt.Fprint(b.Stdout, " ---> Using cache\n")
 			dispatchState.imageID = depCachedID
-			b.newDepDigest = depdencyLayer
-			b.newDepLayer = b.depLayers[b.traceManager.LayerCount-1]
+			if b.firstBuild == true {
+				var updateFiles []string
+				var err error
+
+				lastCacheID := b.cacheIDList[len(b.cacheIDList)-1]
+				updateFiles, err = walkDir(dockerStorgePath+lastCacheID, updateFiles)
+
+				logrus.Debugf("walk path : %s", dockerStorgePath+lastCacheID)
+
+				if err == nil {
+					for _, fi := range updateFiles {
+						b.traceManager.fileUpdateRecord[strings.TrimPrefix(fi, dockerStorgePath+lastCacheID)] = b.traceManager.LayerNum
+					}
+				} else {
+					return false, err
+				}
+			} else {
+				b.newDepDigest = depdencyLayer
+				b.newDepLayer = b.depLayers[b.traceManager.LayerCount-1]
+			}
 			return true, nil
 		}
 		logrus.Debug("[Dep Cache]Miss")
+		// b.imageProber.Set()
+		// err := b.imageProber.Set(dispatchState.imageID, runConfig)
 		// logrus.Debug(depdencyLayer)
 		// logrus.Debug(runConfig)
 		return false, nil
@@ -379,7 +416,7 @@ func (b *DepBuilder) probeCache(dispatchState *dispatchState, runConfig *contain
 		return false, err
 	}
 	logrus.Debugf("cache id is : %s", cachedID)
-	fmt.Fprint (b.Stdout, " ---> Using cache\n")
+	fmt.Fprint(b.Stdout, " ---> Using cache\n")
 
 	dispatchState.imageID = cachedID
 	return true, nil
@@ -397,7 +434,6 @@ func (b *DepBuilder) probeAndCreate(ctx context.Context, dispatchState *dispatch
 func (b *DepBuilder) create(ctx context.Context, runConfig *container.Config) (string, error) {
 	logrus.Debugf("[BUILDER] Command to be executed: %v", runConfig.Cmd)
 	logrus.Debugf("[BUILDER] Image is: %v", runConfig.Image)
-
 
 	hostConfig := hostConfigFromOptions(b.options)
 	container, err := b.containerManager.Create(ctx, runConfig, hostConfig)
